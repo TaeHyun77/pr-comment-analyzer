@@ -1,0 +1,34 @@
+spring:
+  application:
+    name: automation
+  jackson:
+    default-property-inclusion: non_null
+
+server:
+  port: ${SERVER_PORT:8080}
+
+github:
+  token: ${GITHUB_TOKEN:}
+  login: ${GITHUB_LOGIN:}
+  webhook-secret: ${GITHUB_WEBHOOK_SECRET:}
+
+groq:
+  api-key: ${GROQ_API_KEY:}
+  base-url: ${GROQ_BASE_URL:https://api.groq.com/openai/v1}
+  model: ${GROQ_MODEL:llama-3.3-70b-versatile}
+  max-tokens: ${GROQ_MAX_TOKENS:1024}
+  temperature: ${GROQ_TEMPERATURE:0.3}
+  json-mode: ${GROQ_JSON_MODE:true}
+
+slack:
+  enabled: ${SLACK_ENABLED:true}
+  webhook-url: ${SLACK_WEBHOOK_URL:}
+
+pr-analyzer:
+  include-own-comments: ${PR_ANALYZER_INCLUDE_OWN_COMMENTS:true}
+  state-file: ${PR_ANALYZER_STATE_FILE:./pr-analyzer-state.json}
+  file-context-lines: ${PR_ANALYZER_FILE_CONTEXT_LINES:40}
+
+logging:
+  level:
+    com.pr.automation: INFO
