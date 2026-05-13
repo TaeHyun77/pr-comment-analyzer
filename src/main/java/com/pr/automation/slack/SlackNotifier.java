@@ -1,0 +1,135 @@
+package com.pr.automation.slack;
+
+import com.pr.automation.analysis.dto.AnalysisResult;
+import com.pr.automation.analysis.dto.CommentEvent;
+import com.pr.automation.common.error.AutomationException;
+import com.pr.automation.common.error.ErrorCode;
+import com.pr.automation.config.SlackProperties;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestTemplate;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+// 분석 결과를 Slack Incoming Webhook으로 보냄, slack.enabled=false면 전송 없이 로그만 남김
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class SlackNotifier {
+    private static final int TEXT_LIMIT = 2_900;
+    private static final int HEADER_LIMIT = 150;
+    private static final int REPLY_LIMIT = 2_700;
+
+    private final RestTemplate slackRestTemplate;
+    private final SlackProperties slackProperties;
+
+    public void send(CommentEvent event, AnalysisResult result) {
+        if (!slackProperties.isEnabled()) {
+            log.info("Slack 비활성화 — {} #{} verdict='{}' summary='{}'",
+                    event.getRepoFullName(), event.getPrNumber(), result.getVerdict(), result.getCommentSummary());
+            return;
+        }
+        if (!StringUtils.hasText(slackProperties.getWebhookUrl())) {
+            log.warn("slack.webhook-url 미설정 — 전송 생략");
+            return;
+        }
+        post(buildPayload(event, result));
+    }
+
+    public void sendFailure(CommentEvent event, Throwable error) {
+        if (!slackProperties.isEnabled() || !StringUtils.hasText(slackProperties.getWebhookUrl())) {
+            return;
+        }
+        String text = "코멘트 분석 실패: " + event.getRepoFullName() + " #" + event.getPrNumber()
+                + " (<" + event.getCommentHtmlUrl() + "|코멘트>) — "
+                + error.getClass().getSimpleName() + ": " + abbreviate(error.getMessage(), 300);
+        try {
+            post(Collections.singletonMap("text", text));
+        } catch (RuntimeException e) {
+            log.warn("Slack 실패 알림 전송도 실패", e);
+        }
+    }
+
+    Map<String, Object> buildPayload(CommentEvent e, AnalysisResult r) {
+        String location = e.isReviewComment() && StringUtils.hasText(e.getFilePath())
+                ? " · " + e.getFilePath() + (e.getLine() != null ? ":" + e.getLine() : "")
+                : "";
+        String header = "🔍 " + e.getRepoFullName() + " #" + e.getPrNumber() + location;
+
+        List<Map<String, Object>> blocks = new ArrayList<>();
+        blocks.add(mapOf(
+                "type", "header",
+                "text", mapOf("type", "plain_text", "text", abbreviate(header, HEADER_LIMIT), "emoji", true)));
+        blocks.add(section("*코멘트 요약*\n" + nv(r.getCommentSummary())));
+        blocks.add(mapOf(
+                "type", "section",
+                "fields", Arrays.asList(
+                        mapOf("type", "mrkdwn", "text", truncate("*현재 방식*\n" + nv(r.getCurrentApproach()), TEXT_LIMIT)),
+                        mapOf("type", "mrkdwn", "text", truncate("*제안 방식*\n" + nv(r.getSuggestedApproach()), TEXT_LIMIT)))));
+        blocks.add(section("*판정*\n" + nv(r.getVerdict())));
+        blocks.add(section("*근거*\n" + nv(r.getReasoning())));
+        if (StringUtils.hasText(r.getSuggestedReply())) {
+            blocks.add(section("*제안 답변*\n```" + truncate(r.getSuggestedReply(), REPLY_LIMIT) + "```"));
+        }
+        blocks.add(mapOf(
+                "type", "context",
+                "elements", Collections.singletonList(mapOf(
+                        "type", "mrkdwn",
+                        "text", "<" + e.getCommentHtmlUrl() + "|코멘트 보기> · 작성자 `" + nv(e.getCommentAuthor()) + "` · "
+                                + (e.isReviewComment() ? "인라인 리뷰 코멘트" : "PR 일반 코멘트")))));
+
+        return mapOf(
+                "text", "PR #" + e.getPrNumber() + " 코멘트 분석: " + abbreviate(nv(r.getVerdict()), HEADER_LIMIT),
+                "blocks", blocks);
+    }
+
+    private void post(Map<String, Object> payload) {
+        try {
+            String response = slackRestTemplate.postForObject(slackProperties.getWebhookUrl(), payload, String.class);
+            if (response != null && !"ok".equalsIgnoreCase(response.trim())) {
+                log.warn("Slack 응답이 ok가 아님: {}", response);
+            }
+        } catch (RestClientException e) {
+            throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.SLACK_API_ERROR, e);
+        }
+    }
+
+    private static Map<String, Object> section(String mrkdwn) {
+        return mapOf("type", "section", "text", mapOf("type", "mrkdwn", "text", truncate(mrkdwn, TEXT_LIMIT)));
+    }
+
+    private static Map<String, Object> mapOf(Object... kv) {
+        if (kv.length % 2 != 0) {
+            throw new IllegalArgumentException("키/값이 쌍이 아닙니다");
+        }
+        Map<String, Object> m = new LinkedHashMap<>();
+        for (int i = 0; i < kv.length; i += 2) {
+            m.put((String) kv[i], kv[i + 1]);
+        }
+        return m;
+    }
+
+    private static String nv(String s) {
+        return StringUtils.hasText(s) ? s : "—";
+    }
+
+    private static String truncate(String s, int max) {
+        if (s == null) {
+            return "—";
+        }
+        return s.length() <= max ? s : s.substring(0, max - 1) + "…";
+    }
+
+    private static String abbreviate(String s, int max) {
+        return s == null ? "" : truncate(s, max);
+    }
+}
