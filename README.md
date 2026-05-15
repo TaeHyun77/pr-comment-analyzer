@@ -48,7 +48,9 @@ PR 코멘트 → GitHub Webhook → AI(사용자 지정) 분석 → Slack Incomi
   
 - `PR_ANALYZER_STATE_FILE` : 상태 저장 파일 경로 (기본값 `./pr-analyzer-state.json`)
 
-> 시크릿 값은 코드나 저장소에 커밋하지 말고 반드시 환경 변수로만 주입해야 합니다.<br><br>
+> 시크릿 값은 코드나 저장소에 커밋하지 말고 반드시 환경 변수로만 주입해야 합니다.
+
+<br><br>
 
 ### 실행
 
