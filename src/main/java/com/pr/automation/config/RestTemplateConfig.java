@@ -21,6 +21,7 @@ public class RestTemplateConfig {
         rt.setUriTemplateHandler(new DefaultUriBuilderFactory(groqProperties.getBaseUrl()));
         rt.getInterceptors().add((request, body, execution) -> {
             request.getHeaders().set(HttpHeaders.AUTHORIZATION, "Bearer " + groqProperties.getApiKey());
+            request.getHeaders().set(HttpHeaders.USER_AGENT, "pr-comment-analyzer/1.0");
             return execution.execute(request, body);
         });
         return rt;

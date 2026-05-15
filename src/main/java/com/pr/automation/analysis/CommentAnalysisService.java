@@ -25,36 +25,39 @@ public class CommentAnalysisService {
     private final SlackNotifier slackNotifier;
     private final ProcessedCommentStore processedCommentStore;
 
-    // 웹훅에서 호출하는 비동기 진입점, 중복 코멘트는 건너뛰고, 실패는 로그 + Slack 알림으로만 처리한다.
+    // 중복 코멘트는 건너뛰고, 실패는 로그 + Slack 알림으로만 처리
+    // 실패 시에도 Slack에 실패 알림 발송
     @Async(AsyncConfig.ANALYSIS_EXECUTOR)
     public void analyzeAsync(CommentEvent event) {
+        // 이미 처리한 이벤트인지 확인
         if (processedCommentStore.isProcessed(event.getCommentId())) {
             log.info("이미 처리한 코멘트, 건너뜀: {} comment={}", event.getRepoFullName(), event.getCommentId());
             return;
         }
+
         try {
             AnalysisResult result = analyze(event);
             processedCommentStore.markProcessed(event.getCommentId());
             processedCommentStore.save();
-            log.info("코멘트 분석 완료: {} #{} comment={} verdict='{}'",
-                    event.getRepoFullName(), event.getPrNumber(), event.getCommentId(), result.getVerdict());
+            log.info("코멘트 분석 완료: {} #{} comment={} verdict='{}'", event.getRepoFullName(), event.getPrNumber(), event.getCommentId(), result.getVerdict());
         } catch (Exception e) {
-            log.error("코멘트 분석 실패: {} #{} comment={}",
-                    event.getRepoFullName(), event.getPrNumber(), event.getCommentId(), e);
+            log.error("코멘트 분석 실패: {} #{} comment={}", event.getRepoFullName(), event.getPrNumber(), event.getCommentId(), e);
             slackNotifier.sendFailure(event, e);
         }
     }
 
-    /** 동기 분석 + Slack 통지. 수동 테스트 엔드포인트에서 사용 (중복 기록은 하지 않음). */
+    // AI 분석 + Slack 알림
     public AnalysisResult analyze(CommentEvent event) {
         CommentContext context = buildContext(event);
         AnalysisResult result = groqClient.analyze(context);
         slackNotifier.send(event, result);
+
         return result;
     }
 
     private CommentContext buildContext(CommentEvent e) {
         StringBuilder code = new StringBuilder();
+
         if (StringUtils.hasText(e.getDiffHunk())) {
             code.append("코멘트가 달린 부분의 diff:\n").append(e.getDiffHunk());
         } else {
