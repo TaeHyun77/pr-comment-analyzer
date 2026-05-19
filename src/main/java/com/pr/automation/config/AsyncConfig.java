@@ -18,7 +18,6 @@ import java.util.concurrent.Executor;
 @Configuration
 @EnableAsync
 public class AsyncConfig implements AsyncConfigurer {
-
     public static final String ANALYSIS_EXECUTOR = "analysisExecutor";
 
     @Bean(ANALYSIS_EXECUTOR)

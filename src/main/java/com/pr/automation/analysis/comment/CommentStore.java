@@ -1,4 +1,4 @@
-package com.pr.automation.analysis;
+package com.pr.automation.analysis.comment;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pr.automation.config.PrAnalyzerProperties;
@@ -19,21 +19,18 @@ import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 
-/**
- * 이미 분석한 코멘트 ID를 기억해 중복 처리를 막음
- * 로컬 JSON 파일에 영속해 재시작 후에도 유지된다.
- */
+// 이미 분석한 코멘트 ID를 기억해 중복 처리를 막음, 로컬 JSON 파일에 영속해 재시작 후에도 유지됨
 @Slf4j
 @Component
-public class ProcessedCommentStore {
-    /** 보관할 최대 ID 수. 초과 시 가장 오래된 것부터 버린다. */
+public class CommentStore {
+    // 보관할 최대 ID 수, 초과 시 가장 오래된 것부터 버림
     private static final int MAX_IDS = 5_000;
 
     private final Path stateFile;
     private final ObjectMapper objectMapper;
     private final LinkedHashSet<Long> processed = new LinkedHashSet<>();
 
-    public ProcessedCommentStore(PrAnalyzerProperties properties, ObjectMapper objectMapper) {
+    public CommentStore(PrAnalyzerProperties properties, ObjectMapper objectMapper) {
         this.stateFile = Paths.get(properties.getStateFile());
         this.objectMapper = objectMapper;
     }
@@ -78,7 +75,7 @@ public class ProcessedCommentStore {
         }
     }
 
-    /** 상태 파일 JSON 매핑용 DTO. */
+    // 상태 파일 JSON 매핑용 DTO
     @Getter
     @Setter
     @NoArgsConstructor

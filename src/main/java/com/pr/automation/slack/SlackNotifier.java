@@ -34,8 +34,7 @@ public class SlackNotifier {
 
     public void send(CommentEvent event, AnalysisResult result) {
         if (!slackProperties.isEnabled()) {
-            log.info("Slack 비활성화 — {} #{} verdict='{}' summary='{}'",
-                    event.getRepoFullName(), event.getPrNumber(), result.getVerdict(), result.getCommentSummary());
+            log.info("Slack 비활성화 — {} #{} verdict='{}' summary='{}'", event.getRepoFullName(), event.getPrNumber(), result.getVerdict(), result.getCommentSummary());
             return;
         }
         if (!StringUtils.hasText(slackProperties.getWebhookUrl())) {

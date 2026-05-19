@@ -31,7 +31,6 @@ public class CommentEvent {
     private final Integer line;
     private final Long inReplyToId; // 답글인 경우 최상위 부모 코멘트 ID
 
-    //
     public boolean isReviewComment() {
         return TYPE_REVIEW_COMMENT.equals(eventType);
     }

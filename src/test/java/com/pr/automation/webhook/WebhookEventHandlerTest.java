@@ -1,7 +1,7 @@
 package com.pr.automation.webhook;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.pr.automation.analysis.CommentAnalysisService;
+import com.pr.automation.analysis.comment.CommentAnalysisService;
 import com.pr.automation.analysis.dto.CommentEvent;
 import com.pr.automation.config.GithubProperties;
 import com.pr.automation.config.PrAnalyzerProperties;
@@ -31,7 +31,7 @@ class WebhookEventHandlerTest {
         handler = new WebhookEventHandler(
                 objectMapper,
                 new GithubProperties("token", "myname", "secret"),
-                new PrAnalyzerProperties(true, "./state.json", 40),
+                new PrAnalyzerProperties(true, "./state.json", 40, 8, 6, 25000),
                 analysisService);
     }
 
@@ -108,7 +108,7 @@ class WebhookEventHandlerTest {
         WebhookEventHandler h = new WebhookEventHandler(
                 objectMapper,
                 new GithubProperties("token", "myname", "secret"),
-                new PrAnalyzerProperties(false, "./state.json", 40),
+                new PrAnalyzerProperties(false, "./state.json", 40, 8, 6, 25000),
                 analysisService);
         assertThat(h.extract("pull_request_review_comment",
                 bytes(reviewCommentPayload("myname", "myname", "User", "created")))).isEmpty();

@@ -4,7 +4,10 @@
 
 자신의 GitHub PR에 달린 코멘트를 받아 LLM으로 분석하고 결과를 Slack으로 보내는 시스템.
 
-흐름: PR 코멘트 → GitHub Webhook → 서명 검증 → 필터링 → (비동기) LLM 분석 → Slack Incoming Webhook
+흐름: PR 코멘트 → GitHub Webhook → 서명 검증 → 필터링 → (비동기) LLM 자율 탐색 분석 → Slack Incoming Webhook
+
+LLM 분석은 단발 호출이 아니라, LLM이 도구로 레포 파일을 스스로 조회하며 코멘트가 가리키는 코드의
+함수 호출·설정 파일을 추적하는 **에이전트 루프**다(폴백 없음. 레포 조회 불가 시 분석 실패).
 
 - 트리거: GitHub Repository Webhook 
 - LLM: Groq (OpenAI 호환 Chat Completions API), `RestClient`로 직접 호출
@@ -17,9 +20,9 @@
 AutomationApplication            @SpringBootApplication, @ConfigurationPropertiesScan
 config/
   GithubProperties               ("github")  token(옵션), login, webhookSecret
-  GroqProperties                 ("groq")  apiKey, baseUrl, model, maxTokens, temperature, jsonMode
+  GroqProperties                 ("groq")  apiKey, baseUrl, model, maxTokens, temperature
   SlackProperties                ("slack")  enabled, webhookUrl
-  PrAnalyzerProperties           ("pr-analyzer")  includeOwnComments, stateFile, fileContextLines
+  PrAnalyzerProperties           ("pr-analyzer")  includeOwnComments, stateFile, fileContextLines, maxToolIterations, maxFiles, maxFileChars
   AsyncConfig                    @EnableAsync, 분석용 ThreadPoolTaskExecutor("analysisExecutor")
   RestClientConfig               groqRestClient / githubRestClient / slackRestClient
 webhook/
@@ -28,12 +31,14 @@ webhook/
   WebhookEventHandler            payload 파싱·필터링 → CommentEvent 추출 → analyzeAsync 트리거
   dto/WebhookPayload             GitHub 페이로드 중 필요한 필드만 (@JsonProperty로 snake_case 매핑)
 github/
-  GithubClient                   GitHub REST API (토큰 없으면 비활성). 답글 부모 코멘트 조회 등
+  GithubClient                   GitHub REST API (토큰 없으면 비활성). 부모 코멘트·파일 내용·디렉터리 목록 조회
 analysis/
-  CommentAnalysisService         @Async 분석 파이프라인: dedup → 컨텍스트 구성 → Groq → Slack → 처리 기록
-  GroqClient                     Groq Chat Completions 호출, 응답 → AnalysisResult 파싱(코드펜스 제거 폴백)
+  CommentAnalysisService         @Async 분석 파이프라인: dedup → 컨텍스트 구성 → RepoFileReader 결정(불가 시 예외) → Groq → Slack → 처리 기록
+  GroqClient                     Groq Chat Completions 호출. 항상 도구 에이전트 루프(reader 필수)
+  RepoFileReader                 LLM↔레포 조회 경계 인터페이스(readFile/listDirectory, 읽기 전용·단일 레포 스코프)
+  GithubRepoFileReader           RepoFileReader 구현. GithubClient를 레포/headSha(ref)에 바인딩
   ProcessedCommentStore          처리한 comment.id를 JSON 파일에 영속 (중복 처리 방지)
-  dto/                           CommentEvent(추출 결과), CommentContext(LLM 입력), AnalysisResult(LLM 출력)
+  dto/                           CommentEvent(추출 결과), CommentContext(LLM 입력, headSha 포함), AnalysisResult(LLM 출력)
 slack/
   SlackNotifier                  Incoming Webhook으로 Block Kit 메시지 POST
 support/
@@ -46,6 +51,23 @@ common/error/
 
 `CommentAnalysisService`(코멘트 → 분석 → Slack)는 트리거와 무관하게 재사용된다. 현재 트리거는 웹훅 하나지만,
 나중에 폴링 폴러를 추가해도 같은 서비스를 호출하면 된다.
+
+## 자율 탐색 에이전트 루프
+
+`GroqClient.analyze(context, reader)`는 폴백 없이 항상 에이전트 루프로 동작한다. reader는 필수다.
+
+- **reader 결정** (`CommentAnalysisService.repoFileReader`): GitHub 토큰이 있어야 하고,
+  `headSha`가 있으면 그대로, 없으면(issue_comment 등) GitHub API로 PR head SHA를 조회한다.
+  토큰이 없거나 head SHA를 끝내 확보하지 못하면 `REPO_NOT_READABLE` 예외(분석 중단).
+- **에이전트 루프**: LLM에 `read_file`·`list_directory`·`submit_analysis` 도구를 노출하고,
+  LLM이 코멘트가 가리키는 코드의 함수 정의·설정 파일을 스스로 조회하다 `submit_analysis`
+  호출로 종료한다.
+  - 레포/ref는 서버가 `headSha`로 고정(LLM은 경로만 지정) → 읽기 전용·단일 커밋 스코프.
+  - 결과 스키마는 `submit_analysis` 도구의 파라미터로 강제(휴리스틱 JSON 파싱 제거).
+  - 예산: `maxToolIterations`(라운드)·`maxFiles`·`maxFileChars`. 소진 시 도구를
+    `submit_analysis`만 남겨 강제 마무리, 그래도 미제출이면 `AI_RESPONSE_PARSE_ERROR`.
+    `maxToolIterations<=0`은 오설정으로 보고 진입 전 즉시 실패(`AI_API_ERROR`).
+  - 파일 조회 실패는 예외가 아닌 도구 결과 메시지로 회신해 LLM이 경로를 바꿔 재시도.
 
 ## 동기/비동기 경계
 

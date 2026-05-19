@@ -1,6 +1,6 @@
 package com.pr.automation.support;
 
-import com.pr.automation.analysis.CommentAnalysisService;
+import com.pr.automation.analysis.comment.CommentAnalysisService;
 import com.pr.automation.analysis.dto.CommentEvent;
 import com.pr.automation.webhook.WebhookEventHandler;
 import lombok.RequiredArgsConstructor;
@@ -29,9 +29,9 @@ public class InternalController {
 
     @PostMapping("/internal/analyze")
     public ResponseEntity<?> analyze(
-            @RequestHeader(value = "X-GitHub-Event", required = false, defaultValue = "pull_request_review_comment")
-            String event,
-            @RequestBody byte[] rawBody) {
+            @RequestHeader(value = "X-GitHub-Event", required = false, defaultValue = "pull_request_review_comment") String event,
+            @RequestBody byte[] rawBody
+    ) {
         Optional<CommentEvent> extracted = webhookEventHandler.extract(event, rawBody);
         if (!extracted.isPresent()) {
             return ResponseEntity.noContent().build();
