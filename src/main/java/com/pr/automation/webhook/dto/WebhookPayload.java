@@ -14,7 +14,7 @@ import java.util.Map;
 @AllArgsConstructor
 public class WebhookPayload {
 
-    private String action;
+    private String action; // 이벤트의 동작. 코멘트 생성이면 "created"
 
     private Comment comment;
 

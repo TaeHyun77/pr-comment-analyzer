@@ -1,6 +1,7 @@
 package com.pr.automation.config;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpHeaders;
@@ -8,27 +9,41 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.DefaultUriBuilderFactory;
 
+import java.time.Duration;
+
 @Configuration
 @RequiredArgsConstructor
 public class RestTemplateConfig {
+
+    // 외부 API 무한 대기 방지용 타임아웃. 환경별 튜닝이 필요해지면 *Properties로 승격한다.
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
+    private static final Duration GROQ_READ_TIMEOUT = Duration.ofSeconds(60);
+    private static final Duration DEFAULT_READ_TIMEOUT = Duration.ofSeconds(10);
 
     private final GroqProperties groqProperties;
     private final GithubProperties githubProperties;
 
     @Bean
-    public RestTemplate groqRestTemplate() {
-        RestTemplate rt = new RestTemplate();
+    public RestTemplate groqRestTemplate(RestTemplateBuilder builder) {
+        RestTemplate rt = builder
+                .setConnectTimeout(CONNECT_TIMEOUT)
+                .setReadTimeout(GROQ_READ_TIMEOUT)
+                .build();
         rt.setUriTemplateHandler(new DefaultUriBuilderFactory(groqProperties.getBaseUrl()));
         rt.getInterceptors().add((request, body, execution) -> {
             request.getHeaders().set(HttpHeaders.AUTHORIZATION, "Bearer " + groqProperties.getApiKey());
+            request.getHeaders().set(HttpHeaders.USER_AGENT, "pr-comment-analyzer/1.0");
             return execution.execute(request, body);
         });
         return rt;
     }
 
     @Bean
-    public RestTemplate githubRestTemplate() {
-        RestTemplate rt = new RestTemplate();
+    public RestTemplate githubRestTemplate(RestTemplateBuilder builder) {
+        RestTemplate rt = builder
+                .setConnectTimeout(CONNECT_TIMEOUT)
+                .setReadTimeout(DEFAULT_READ_TIMEOUT)
+                .build();
         rt.setUriTemplateHandler(new DefaultUriBuilderFactory("https://api.github.com"));
         rt.getInterceptors().add((request, body, execution) -> {
             request.getHeaders().set(HttpHeaders.ACCEPT, "application/vnd.github+json");
@@ -42,7 +57,10 @@ public class RestTemplateConfig {
     }
 
     @Bean
-    public RestTemplate slackRestTemplate() {
-        return new RestTemplate();
+    public RestTemplate slackRestTemplate(RestTemplateBuilder builder) {
+        return builder
+                .setConnectTimeout(CONNECT_TIMEOUT)
+                .setReadTimeout(DEFAULT_READ_TIMEOUT)
+                .build();
     }
 }

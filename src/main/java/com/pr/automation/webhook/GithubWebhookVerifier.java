@@ -19,17 +19,16 @@ import java.security.MessageDigest;
 @RequiredArgsConstructor
 public class GithubWebhookVerifier {
     private static final String PREFIX = "sha256=";
-
     private final GithubProperties githubProperties;
 
     public void verify(byte[] rawBody, String signatureHeader) {
         if (!StringUtils.hasText(githubProperties.getWebhookSecret())) {
-            throw new AutomationException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.WEBHOOK_SIGNATURE_INVALID,
-                    "github.webhook-secret 미설정");
+            throw new AutomationException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.WEBHOOK_SIGNATURE_INVALID, "github.webhook-secret 미설정");
         }
         if (!StringUtils.hasText(signatureHeader) || !signatureHeader.startsWith(PREFIX)) {
             throw new AutomationException(HttpStatus.UNAUTHORIZED, ErrorCode.WEBHOOK_SIGNATURE_INVALID);
         }
+
         byte[] expected = hmacSha256(rawBody, githubProperties.getWebhookSecret());
         byte[] provided = hexToBytes(signatureHeader.substring(PREFIX.length()));
         if (provided == null || !MessageDigest.isEqual(expected, provided)) {

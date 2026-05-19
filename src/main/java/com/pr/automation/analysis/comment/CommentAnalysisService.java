@@ -1,13 +1,19 @@
-package com.pr.automation.analysis;
+package com.pr.automation.analysis.comment;
 
+import com.pr.automation.analysis.GroqClient;
 import com.pr.automation.analysis.dto.AnalysisResult;
 import com.pr.automation.analysis.dto.CommentContext;
 import com.pr.automation.analysis.dto.CommentEvent;
+import com.pr.automation.analysis.github.GithubRepoFileReader;
+import com.pr.automation.analysis.github.RepoFileReader;
+import com.pr.automation.common.error.AutomationException;
+import com.pr.automation.common.error.ErrorCode;
 import com.pr.automation.config.AsyncConfig;
 import com.pr.automation.github.GithubClient;
 import com.pr.automation.slack.SlackNotifier;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -23,19 +29,21 @@ public class CommentAnalysisService {
     private final GithubClient githubClient;
     private final GroqClient groqClient;
     private final SlackNotifier slackNotifier;
-    private final ProcessedCommentStore processedCommentStore;
+    private final CommentStore commentStore;
 
-    // 웹훅에서 호출하는 비동기 진입점, 중복 코멘트는 건너뛰고, 실패는 로그 + Slack 알림으로만 처리한다.
+    // 중복 코멘트는 건너뛰고, 실패는 로그 + Slack 알림으로만 처리
+    // 실패 시에도 Slack에 실패 알림 발송
     @Async(AsyncConfig.ANALYSIS_EXECUTOR)
     public void analyzeAsync(CommentEvent event) {
-        if (processedCommentStore.isProcessed(event.getCommentId())) {
+        if (commentStore.isProcessed(event.getCommentId())) { // 이미 처리한 이벤트인지 확인
             log.info("이미 처리한 코멘트, 건너뜀: {} comment={}", event.getRepoFullName(), event.getCommentId());
             return;
         }
+
         try {
             AnalysisResult result = analyze(event);
-            processedCommentStore.markProcessed(event.getCommentId());
-            processedCommentStore.save();
+            commentStore.markProcessed(event.getCommentId());
+            commentStore.save();
             log.info("코멘트 분석 완료: {} #{} comment={} verdict='{}'",
                     event.getRepoFullName(), event.getPrNumber(), event.getCommentId(), result.getVerdict());
         } catch (Exception e) {
@@ -45,16 +53,36 @@ public class CommentAnalysisService {
         }
     }
 
-    /** 동기 분석 + Slack 통지. 수동 테스트 엔드포인트에서 사용 (중복 기록은 하지 않음). */
+    // AI 분석 + Slack 알림
     public AnalysisResult analyze(CommentEvent event) {
         CommentContext context = buildContext(event);
-        AnalysisResult result = groqClient.analyze(context);
+        AnalysisResult result = groqClient.analyze(context, repoFileReader(event));
         slackNotifier.send(event, result);
+
         return result;
+    }
+
+    // 자율 탐색 reader를 만듦 -> LLM이 스스로 레포 파일을 뒤져볼 수 있게 해주는 통로 객체 생성
+    // headSha가 없으면(issue_comment 등) GitHub API로 PR head SHA를 조회
+    // GitHub 비활성이거나 head SHA를 확보할 수 없으면 분석을 진행할 수 없으므로 예외
+    private RepoFileReader repoFileReader(CommentEvent e) {
+        if (!githubClient.isEnabled()) {
+            throw new AutomationException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.REPO_NOT_READABLE, "GitHub 토큰 미설정으로 레포 조회 불가");
+        }
+
+        String headSha = e.getHeadSha();
+        if (!StringUtils.hasText(headSha)) {
+            headSha = githubClient.fetchPullHeadSha(e.getRepoFullName(), e.getPrNumber()).orElse(null);
+        }
+        if (!StringUtils.hasText(headSha)) {
+            throw new AutomationException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.REPO_NOT_READABLE, "PR head SHA를 확인할 수 없음 (PR #" + e.getPrNumber() + ")");
+        }
+        return new GithubRepoFileReader(githubClient, e.getRepoFullName(), headSha);
     }
 
     private CommentContext buildContext(CommentEvent e) {
         StringBuilder code = new StringBuilder();
+
         if (StringUtils.hasText(e.getDiffHunk())) {
             code.append("코멘트가 달린 부분의 diff:\n").append(e.getDiffHunk());
         } else {
@@ -73,6 +101,7 @@ public class CommentAnalysisService {
                 .prNumber(e.getPrNumber())
                 .prTitle(e.getPrTitle())
                 .prBody(e.getPrBody())
+                .headSha(e.getHeadSha())
                 .filePath(e.getFilePath())
                 .line(e.getLine())
                 .codeContext(code.toString())

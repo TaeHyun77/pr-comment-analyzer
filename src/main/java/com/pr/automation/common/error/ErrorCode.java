@@ -17,6 +17,9 @@ public enum ErrorCode {
     AI_RESPONSE_PARSE_ERROR("AI 응답을 파싱할 수 없습니다"),
     SLACK_API_ERROR("Slack 전송에 실패했습니다"),
 
+    // 분석 전제 조건
+    REPO_NOT_READABLE("레포 파일을 읽을 수 없어 분석을 진행할 수 없습니다"),
+
     // 내부
     STATE_IO_ERROR("처리 상태 파일 입출력에 실패했습니다");
 
