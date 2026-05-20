@@ -1,13 +1,16 @@
-package com.pr.automation.analysis;
+package com.pr.automation.analysis.agent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pr.automation.analysis.dto.AnalysisResult;
 import com.pr.automation.analysis.dto.CommentContext;
 import com.pr.automation.analysis.github.RepoFileReader;
+import com.pr.automation.analysis.llm.GroqChatClient;
+import com.pr.automation.analysis.llm.dto.ChatMessage;
+import com.pr.automation.analysis.llm.dto.FunctionCall;
+import com.pr.automation.analysis.llm.dto.ToolCall;
 import com.pr.automation.common.error.AutomationException;
 import com.pr.automation.config.PrAnalyzerProperties;
 import org.junit.jupiter.api.Test;
-import org.springframework.web.client.RestTemplate;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -18,11 +21,10 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-class GroqClientTest {
+class CommentAnalysisAgentTest {
 
     private static final PrAnalyzerProperties BUDGET =
             new PrAnalyzerProperties(true, "./state.json", 40, 4, 6, 25000);
@@ -34,28 +36,28 @@ class GroqClientTest {
                 .line(10).codeContext("diff").commentBody("이거 왜 이렇게 했어요?").build();
     }
 
-    // --- JSON 파싱 동작 (에이전트 경로 공용) ---
+    // --- JSON 추출 동작 (폴백 경로 공용) ---
 
     @Test
     void extractJson_순수_JSON() {
-        assertThat(GroqClient.extractJson("{\"a\":1}")).isEqualTo("{\"a\":1}");
+        assertThat(CommentAnalysisAgent.extractJson("{\"a\":1}")).isEqualTo("{\"a\":1}");
     }
 
     @Test
     void extractJson_코드펜스_제거() {
-        assertThat(GroqClient.extractJson("```json\n{\"a\":1}\n```")).isEqualTo("{\"a\":1}");
-        assertThat(GroqClient.extractJson("결과:\n```\n{\"x\":2}\n```\n끝")).isEqualTo("{\"x\":2}");
+        assertThat(CommentAnalysisAgent.extractJson("```json\n{\"a\":1}\n```")).isEqualTo("{\"a\":1}");
+        assertThat(CommentAnalysisAgent.extractJson("결과:\n```\n{\"x\":2}\n```\n끝")).isEqualTo("{\"x\":2}");
     }
 
     @Test
     void extractJson_앞뒤_텍스트_제거() {
-        assertThat(GroqClient.extractJson("여기 결과 {\"k\":\"v\"} 입니다")).isEqualTo("{\"k\":\"v\"}");
+        assertThat(CommentAnalysisAgent.extractJson("여기 결과 {\"k\":\"v\"} 입니다")).isEqualTo("{\"k\":\"v\"}");
     }
 
     @Test
-    void parse_snake_case_JSON을_AnalysisResult로_변환한다() {
-        GroqClient client = new GroqClient(null, null, new ObjectMapper(), BUDGET);
-        String json = "```json\n"
+    void parseFallback이_snake_case_JSON을_AnalysisResult로_변환한다() {
+        CommentAnalysisAgent agent = newAgent(mock(GroqChatClient.class), BUDGET);
+        String content = "```json\n"
                 + "{\n"
                 + "  \"comment_summary\": \"X로 바꾸자는 제안\",\n"
                 + "  \"current_approach\": \"B 방식\",\n"
@@ -65,7 +67,7 @@ class GroqClientTest {
                 + "  \"suggested_reply\": \"좋은 지적 감사합니다. 측정해보겠습니다.\"\n"
                 + "}\n"
                 + "```";
-        AnalysisResult result = client.parse(json);
+        AnalysisResult result = agent.parseFallback(content);
         assertThat(result.getCommentSummary()).isEqualTo("X로 바꾸자는 제안");
         assertThat(result.getCurrentApproach()).isEqualTo("B 방식");
         assertThat(result.getSuggestedApproach()).isEqualTo("X 방식");
@@ -75,9 +77,8 @@ class GroqClientTest {
 
     @Test
     void reader가_null이면_REPO_NOT_READABLE_예외() {
-        GroqClient client = new GroqClient(null, props(), new ObjectMapper(), BUDGET);
-
-        assertThatThrownBy(() -> client.analyze(context(), null))
+        CommentAnalysisAgent agent = newAgent(mock(GroqChatClient.class), BUDGET);
+        assertThatThrownBy(() -> agent.run(context(), null))
                 .isInstanceOf(AutomationException.class);
     }
 
@@ -85,9 +86,9 @@ class GroqClientTest {
     void maxToolIterations가_0이하면_예외() {
         PrAnalyzerProperties zero =
                 new PrAnalyzerProperties(true, "./s.json", 40, 0, 6, 25000);
-        GroqClient client = new GroqClient(null, props(), new ObjectMapper(), zero);
+        CommentAnalysisAgent agent = newAgent(mock(GroqChatClient.class), zero);
 
-        assertThatThrownBy(() -> client.analyze(context(), new RecordingReader(Optional.of("x"))))
+        assertThatThrownBy(() -> agent.run(context(), new RecordingReader(Optional.of("x"))))
                 .isInstanceOf(AutomationException.class);
     }
 
@@ -96,17 +97,16 @@ class GroqClientTest {
     @Test
     void 시나리오A_read_file_후_submit_analysis로_종료한다() {
         RecordingReader reader = new RecordingReader(Optional.of("public class Foo {}"));
-        RestTemplate rt = mock(RestTemplate.class);
-        when(rt.postForObject(eq("/chat/completions"), any(), eq(GroqClient.ChatResponse.class)))
-                .thenReturn(
-                        responseWithToolCall(GroqClient.class, "read_file", "{\"path\":\"src/Bar.java\"}"),
-                        responseWithToolCall(GroqClient.class, "submit_analysis",
-                                "{\"comment_summary\":\"요약\",\"current_approach\":\"현행\","
-                                        + "\"suggested_approach\":\"제안\",\"verdict\":\"추가 논의 필요 - 근거\","
-                                        + "\"reasoning\":\"트레이드오프\",\"suggested_reply\":\"답변\"}"));
-        GroqClient client = new GroqClient(rt, props(), new ObjectMapper(), BUDGET);
+        GroqChatClient chat = mock(GroqChatClient.class);
+        when(chat.send(any(), any(), any())).thenReturn(
+                assistantWithCall("read_file", "{\"path\":\"src/Bar.java\"}"),
+                assistantWithCall("submit_analysis",
+                        "{\"comment_summary\":\"요약\",\"current_approach\":\"현행\","
+                                + "\"suggested_approach\":\"제안\",\"verdict\":\"추가 논의 필요 - 근거\","
+                                + "\"reasoning\":\"트레이드오프\",\"suggested_reply\":\"답변\"}"));
+        CommentAnalysisAgent agent = newAgent(chat, BUDGET);
 
-        AnalysisResult result = client.analyze(context(), reader);
+        AnalysisResult result = agent.run(context(), reader);
 
         // src/Foo.java = 시작 파일 프리페치, src/Bar.java = LLM이 자율로 따라간 의존 파일
         assertThat(reader.readPaths).containsExactly("src/Foo.java", "src/Bar.java");
@@ -117,15 +117,14 @@ class GroqClientTest {
     @Test
     void 시나리오C_파일이_없으면_도구결과로_알리고_모델이_회복한다() {
         RecordingReader reader = new RecordingReader(Optional.empty());
-        RestTemplate rt = mock(RestTemplate.class);
-        when(rt.postForObject(eq("/chat/completions"), any(), eq(GroqClient.ChatResponse.class)))
-                .thenReturn(
-                        responseWithToolCall(GroqClient.class, "read_file", "{\"path\":\"없는파일.java\"}"),
-                        responseWithToolCall(GroqClient.class, "submit_analysis",
-                                "{\"comment_summary\":\"요약\",\"verdict\":\"현 구현 유지 권장\"}"));
-        GroqClient client = new GroqClient(rt, props(), new ObjectMapper(), BUDGET);
+        GroqChatClient chat = mock(GroqChatClient.class);
+        when(chat.send(any(), any(), any())).thenReturn(
+                assistantWithCall("read_file", "{\"path\":\"없는파일.java\"}"),
+                assistantWithCall("submit_analysis",
+                        "{\"comment_summary\":\"요약\",\"verdict\":\"현 구현 유지 권장\"}"));
+        CommentAnalysisAgent agent = newAgent(chat, BUDGET);
 
-        AnalysisResult result = client.analyze(context(), reader);
+        AnalysisResult result = agent.run(context(), reader);
 
         // 프리페치(src/Foo.java)·도구 조회(없는파일.java) 모두 empty여도 모델이 회복해 종료
         assertThat(reader.readPaths).containsExactly("src/Foo.java", "없는파일.java");
@@ -136,35 +135,33 @@ class GroqClientTest {
     void 시나리오B_예산_내_submit_미호출시_파싱_예외() {
         PrAnalyzerProperties oneRound =
                 new PrAnalyzerProperties(true, "./s.json", 40, 1, 6, 25000);
-        RestTemplate rt = mock(RestTemplate.class);
-        when(rt.postForObject(eq("/chat/completions"), any(), eq(GroqClient.ChatResponse.class)))
-                .thenReturn(responseWithToolCall(GroqClient.class, "read_file", "{\"path\":\"a\"}"));
-        GroqClient client = new GroqClient(rt, props(), new ObjectMapper(), oneRound);
+        GroqChatClient chat = mock(GroqChatClient.class);
+        when(chat.send(any(), any(), any()))
+                .thenReturn(assistantWithCall("read_file", "{\"path\":\"a\"}"));
+        CommentAnalysisAgent agent = newAgent(chat, oneRound);
 
-        assertThatThrownBy(() -> client.analyze(context(), new RecordingReader(Optional.of("x"))))
+        assertThatThrownBy(() -> agent.run(context(), new RecordingReader(Optional.of("x"))))
                 .isInstanceOf(AutomationException.class);
     }
 
     // --- 헬퍼 ---
 
-    private static com.pr.automation.config.GroqProperties props() {
-        return new com.pr.automation.config.GroqProperties(
-                "key", "http://localhost", "model", 2048, 0.3);
+    private static CommentAnalysisAgent newAgent(GroqChatClient chat, PrAnalyzerProperties props) {
+        return new CommentAnalysisAgent(chat, new AgentPromptBuilder(props), new AgentToolSpecs(), new ObjectMapper(), props);
     }
 
-    private static GroqClient.ChatResponse responseWithToolCall(Class<?> ignored, String fn, String argsJson) {
-        GroqClient.FunctionCall f = new GroqClient.FunctionCall();
+    private static ChatMessage assistantWithCall(String fn, String argsJson) {
+        FunctionCall f = new FunctionCall();
         f.setName(fn);
         f.setArguments(argsJson);
-        GroqClient.ToolCall tc = new GroqClient.ToolCall();
+        ToolCall tc = new ToolCall();
         tc.setId("call_1");
         tc.setType("function");
         tc.setFunction(f);
-        GroqClient.ChatMessage m = new GroqClient.ChatMessage();
+        ChatMessage m = new ChatMessage();
         m.setRole("assistant");
         m.setToolCalls(new ArrayList<>(Collections.singletonList(tc)));
-        return new GroqClient.ChatResponse(
-                Collections.singletonList(new GroqClient.Choice(m, "tool_calls")));
+        return m;
     }
 
     private static class RecordingReader implements RepoFileReader {

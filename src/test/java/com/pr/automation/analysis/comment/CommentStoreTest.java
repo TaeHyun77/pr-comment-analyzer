@@ -1,7 +1,6 @@
-package com.pr.automation.analysis;
+package com.pr.automation.analysis.comment;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.pr.automation.analysis.comment.CommentStore;
 import com.pr.automation.config.PrAnalyzerProperties;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;

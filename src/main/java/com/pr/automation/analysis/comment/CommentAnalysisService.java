@@ -1,6 +1,6 @@
 package com.pr.automation.analysis.comment;
 
-import com.pr.automation.analysis.GroqClient;
+import com.pr.automation.analysis.agent.CommentAnalysisAgent;
 import com.pr.automation.analysis.dto.AnalysisResult;
 import com.pr.automation.analysis.dto.CommentContext;
 import com.pr.automation.analysis.dto.CommentEvent;
@@ -21,13 +21,13 @@ import org.springframework.util.StringUtils;
 import java.util.ArrayList;
 import java.util.List;
 
-// 코멘트 분석 파이프라인: 중복 확인 → 컨텍스트 구성 → LLM 분석 → Slack 통지 → 처리 기록
+// 코멘트 분석 파이프라인: 중복 확인 → 컨텍스트 구성 → 에이전트 실행 → Slack 통지 → 처리 기록
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class CommentAnalysisService {
     private final GithubClient githubClient;
-    private final GroqClient groqClient;
+    private final CommentAnalysisAgent analysisAgent;
     private final SlackNotifier slackNotifier;
     private final CommentStore commentStore;
 
@@ -56,7 +56,7 @@ public class CommentAnalysisService {
     // AI 분석 + Slack 알림
     public AnalysisResult analyze(CommentEvent event) {
         CommentContext context = buildContext(event);
-        AnalysisResult result = groqClient.analyze(context, repoFileReader(event));
+        AnalysisResult result = analysisAgent.run(context, repoFileReader(event));
         slackNotifier.send(event, result);
 
         return result;

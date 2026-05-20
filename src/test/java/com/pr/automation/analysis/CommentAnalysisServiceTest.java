@@ -1,5 +1,6 @@
 package com.pr.automation.analysis;
 
+import com.pr.automation.analysis.agent.CommentAnalysisAgent;
 import com.pr.automation.analysis.comment.CommentAnalysisService;
 import com.pr.automation.analysis.comment.CommentStore;
 import com.pr.automation.analysis.dto.AnalysisResult;
@@ -24,7 +25,7 @@ import static org.mockito.Mockito.when;
 class CommentAnalysisServiceTest {
 
     private GithubClient githubClient;
-    private GroqClient groqClient;
+    private CommentAnalysisAgent analysisAgent;
     private SlackNotifier slackNotifier;
     private CommentStore store;
     private CommentAnalysisService service;
@@ -37,22 +38,22 @@ class CommentAnalysisServiceTest {
     @BeforeEach
     void setUp() {
         githubClient = mock(GithubClient.class);
-        groqClient = mock(GroqClient.class);
+        analysisAgent = mock(CommentAnalysisAgent.class);
         slackNotifier = mock(SlackNotifier.class);
         store = mock(CommentStore.class);
         when(githubClient.isEnabled()).thenReturn(true);
-        service = new CommentAnalysisService(githubClient, groqClient, slackNotifier, store);
+        service = new CommentAnalysisService(githubClient, analysisAgent, slackNotifier, store);
     }
 
     @Test
     void 미처리_코멘트는_분석후_Slack전송하고_처리기록한다() {
         AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변");
         when(store.isProcessed(555L)).thenReturn(false);
-        when(groqClient.analyze(any(CommentContext.class), any())).thenReturn(result);
+        when(analysisAgent.run(any(CommentContext.class), any())).thenReturn(result);
 
         service.analyzeAsync(EVENT);
 
-        verify(groqClient).analyze(any(CommentContext.class), any());
+        verify(analysisAgent).run(any(CommentContext.class), any());
         verify(slackNotifier).send(eq(EVENT), eq(result));
         verify(store).markProcessed(555L);
         verify(store).save();
@@ -65,7 +66,7 @@ class CommentAnalysisServiceTest {
 
         service.analyzeAsync(EVENT);
 
-        verifyNoInteractions(groqClient, slackNotifier);
+        verifyNoInteractions(analysisAgent, slackNotifier);
         verify(store, never()).markProcessed(anyLong());
     }
 
@@ -73,7 +74,7 @@ class CommentAnalysisServiceTest {
     void 분석_실패시_Slack에_실패를_알리고_처리기록은_하지_않는다() {
         when(store.isProcessed(555L)).thenReturn(false);
         RuntimeException boom = new RuntimeException("LLM down");
-        when(groqClient.analyze(any(CommentContext.class), any())).thenThrow(boom);
+        when(analysisAgent.run(any(CommentContext.class), any())).thenThrow(boom);
 
         service.analyzeAsync(EVENT);
 
@@ -91,11 +92,11 @@ class CommentAnalysisServiceTest {
         AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변");
         when(store.isProcessed(556L)).thenReturn(false);
         when(githubClient.fetchPullHeadSha("me/repo", 7)).thenReturn(Optional.of("shaABC"));
-        when(groqClient.analyze(any(CommentContext.class), any())).thenReturn(result);
+        when(analysisAgent.run(any(CommentContext.class), any())).thenReturn(result);
 
         service.analyzeAsync(issue);
 
-        verify(groqClient).analyze(any(CommentContext.class), any());
+        verify(analysisAgent).run(any(CommentContext.class), any());
         verify(slackNotifier).send(eq(issue), eq(result));
         verify(store).markProcessed(556L);
     }
@@ -111,7 +112,7 @@ class CommentAnalysisServiceTest {
         service.analyzeAsync(issue);
 
         verify(slackNotifier).sendFailure(eq(issue), any());
-        verify(groqClient, never()).analyze(any(), any());
+        verify(analysisAgent, never()).run(any(), any());
         verify(store, never()).markProcessed(anyLong());
     }
 }
