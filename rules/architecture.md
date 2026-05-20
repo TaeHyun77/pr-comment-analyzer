@@ -7,45 +7,12 @@
 흐름: PR 코멘트 → GitHub Webhook → 서명 검증 → 필터링 → (비동기) LLM 자율 탐색 분석 → Slack Incoming Webhook
 
 LLM 분석은 단발 호출이 아니라, LLM이 도구로 레포 파일을 스스로 조회하며 코멘트가 가리키는 코드의
-함수 호출·설정 파일을 추적하는 **에이전트 루프**다(폴백 없음. 레포 조회 불가 시 분석 실패).
+함수 호출·설정 파일을 추적하는 에이전트 루프(폴백 없음. 레포 조회 불가 시 분석 실패).
 
 - 트리거: GitHub Repository Webhook 
-- LLM: Groq (OpenAI 호환 Chat Completions API), `RestClient`로 직접 호출
+- LLM: Groq (OpenAI 호환 Chat Completions API), `RestTemplate`로 직접 호출
 - 통지: Slack Incoming Webhook 
-- 기술 스택: Spring Boot 4.x / Java 8 / Jackson 3
-
-## 패키지 구조 (`com.pr.automation`)
-
-```
-AutomationApplication            @SpringBootApplication, @ConfigurationPropertiesScan
-config/
-  GithubProperties               ("github")  token(옵션), login, webhookSecret
-  GroqProperties                 ("groq")  apiKey, baseUrl, model, maxTokens, temperature
-  SlackProperties                ("slack")  enabled, webhookUrl
-  PrAnalyzerProperties           ("pr-analyzer")  includeOwnComments, stateFile, fileContextLines, maxToolIterations, maxFiles, maxFileChars
-  AsyncConfig                    @EnableAsync, 분석용 ThreadPoolTaskExecutor("analysisExecutor")
-  RestClientConfig               groqRestClient / githubRestClient / slackRestClient
-webhook/
-  GithubWebhookController        POST /webhook/github : 서명 검증 → handler 위임 → 200
-  GithubWebhookVerifier          X-Hub-Signature-256 HMAC-SHA256 검증
-  WebhookEventHandler            payload 파싱·필터링 → CommentEvent 추출 → analyzeAsync 트리거
-  dto/WebhookPayload             GitHub 페이로드 중 필요한 필드만 (@JsonProperty로 snake_case 매핑)
-github/
-  GithubClient                   GitHub REST API (토큰 없으면 비활성). 부모 코멘트·파일 내용·디렉터리 목록 조회
-analysis/
-  CommentAnalysisService         @Async 분석 파이프라인: dedup → 컨텍스트 구성 → RepoFileReader 결정(불가 시 예외) → Groq → Slack → 처리 기록
-  GroqClient                     Groq Chat Completions 호출. 항상 도구 에이전트 루프(reader 필수)
-  RepoFileReader                 LLM↔레포 조회 경계 인터페이스(readFile/listDirectory, 읽기 전용·단일 레포 스코프)
-  GithubRepoFileReader           RepoFileReader 구현. GithubClient를 레포/headSha(ref)에 바인딩
-  ProcessedCommentStore          처리한 comment.id를 JSON 파일에 영속 (중복 처리 방지)
-  dto/                           CommentEvent(추출 결과), CommentContext(LLM 입력, headSha 포함), AnalysisResult(LLM 출력)
-slack/
-  SlackNotifier                  Incoming Webhook으로 Block Kit 메시지 POST
-support/
-  InternalController             GET /health, POST /internal/analyze (수동 테스트: 웹훅 형식 바디를 동기 분석)
-common/error/
-  AutomationException(HttpStatus, ErrorCode) / ErrorCode / ErrorDto / CustomExceptionHandler(@RestControllerAdvice)
-```
+- 기술 스택: Spring Boot 2.7.18 / Java 8 / Jackson 3
 
 ## 트리거와 분석의 분리
 
