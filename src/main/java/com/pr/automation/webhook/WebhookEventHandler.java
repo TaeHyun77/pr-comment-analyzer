@@ -35,7 +35,7 @@ public class WebhookEventHandler {
             return;
         }
 
-        // payload로부터 정보 추출
+        // payload로부터 정보 추출 - 이 부분 테스트
         Optional<CommentEvent> extracted = extract(event, rawBody);
         if (!extracted.isPresent()) {
             log.debug("웹훅 이벤트 무시 (event={}, delivery={})", event, deliveryId);
