@@ -14,8 +14,8 @@ import org.springframework.util.StringUtils;
 @Component
 @RequiredArgsConstructor
 public class AgentPromptBuilder {
-    private static final int PR_BODY_LIMIT = 1_500;
-    private static final int CODE_LIMIT = 6_000;
+    private static final int PR_BODY_LIMIT = 1_500; // PR 본문 설명 길이 제한
+    private static final int CODE_LIMIT = 6_000; // 코멘트 주변 코드 맥락 길이 제한
     private static final String EVENT_REVIEW_COMMENT = "review_comment";
 
     private final PrAnalyzerProperties prAnalyzerProperties;
