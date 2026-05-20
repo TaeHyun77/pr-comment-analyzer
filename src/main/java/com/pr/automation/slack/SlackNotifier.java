@@ -48,11 +48,18 @@ public class SlackNotifier {
         if (!slackProperties.isEnabled() || !StringUtils.hasText(slackProperties.getWebhookUrl())) {
             return;
         }
-        String text = "코멘트 분석 실패: " + event.getRepoFullName() + " #" + event.getPrNumber()
-                + " (<" + event.getCommentHtmlUrl() + "|코멘트>) — "
-                + error.getClass().getSimpleName() + ": " + abbreviate(error.getMessage(), 300);
+        String errorSummary = error.getClass().getSimpleName() + ": " + abbreviate(error.getMessage(), 300);
+        // text는 알림 미리보기/푸시용 fallback. UI는 blocks를 우선 렌더링한다.
+        String text = "코멘트 분석 실패: " + event.getRepoFullName() + " #" + event.getPrNumber() + " — " + errorSummary;
+
+        List<Map<String, Object>> blocks = new ArrayList<>();
+        blocks.add(section(":warning: *코멘트 분석 실패*\n"
+                + event.getRepoFullName() + " #" + event.getPrNumber() + "\n`" + errorSummary + "`"));
+        if (StringUtils.hasText(event.getCommentHtmlUrl())) {
+            blocks.add(actionBlock(event.getCommentHtmlUrl(), "💬 GitHub에서 답변하기"));
+        }
         try {
-            post(Collections.singletonMap("text", text));
+            post(mapOf("text", text, "blocks", blocks));
         } catch (RuntimeException e) {
             log.warn("Slack 실패 알림 전송도 실패", e);
         }
@@ -79,11 +86,14 @@ public class SlackNotifier {
         if (StringUtils.hasText(r.getSuggestedReply())) {
             blocks.add(section("*제안 답변*\n```" + truncate(r.getSuggestedReply(), REPLY_LIMIT) + "```"));
         }
+        if (StringUtils.hasText(e.getCommentHtmlUrl())) {
+            blocks.add(actionBlock(e.getCommentHtmlUrl(), "💬 GitHub에서 답변하기"));
+        }
         blocks.add(mapOf(
                 "type", "context",
                 "elements", Collections.singletonList(mapOf(
                         "type", "mrkdwn",
-                        "text", "<" + e.getCommentHtmlUrl() + "|코멘트 보기> · 작성자 `" + nv(e.getCommentAuthor()) + "` · "
+                        "text", "작성자 `" + nv(e.getCommentAuthor()) + "` · "
                                 + (e.isReviewComment() ? "인라인 리뷰 코멘트" : "PR 일반 코멘트")))));
 
         return mapOf(
@@ -104,6 +114,17 @@ public class SlackNotifier {
 
     private static Map<String, Object> section(String mrkdwn) {
         return mapOf("type", "section", "text", mapOf("type", "mrkdwn", "text", truncate(mrkdwn, TEXT_LIMIT)));
+    }
+
+    // URL 버튼 1개를 가진 actions 블록을 만든다. 인바운드 webhook 불필요한 link 타입 버튼.
+    private static Map<String, Object> actionBlock(String url, String label) {
+        return mapOf(
+                "type", "actions",
+                "elements", Collections.singletonList(mapOf(
+                        "type", "button",
+                        "text", mapOf("type", "plain_text", "text", label, "emoji", true),
+                        "url", url,
+                        "style", "primary")));
     }
 
     private static Map<String, Object> mapOf(Object... kv) {
