@@ -1,10 +1,10 @@
 ## pr-comment-analyzer
 
-자신의 GitHub PR에 달린 코멘트를 AI가 자동으로 분석해 요약, 현재 방식과 제안 방식 비교, 판정, 근거, 답변 초안을 Slack으로 전송해주는 시스템
+자신의 GitHub PR에 달린 코멘트를 AI가 자동으로 분석해 요약, 현재 방식과 제안 방식 비교, 판정, 근거, 답변 초안을 Slack으로 전송해주는 시스템<br><br>
 
 > 블로그 : [https://velog.io/@ayeah77/series/PR-리뷰-코멘트](https://velog.io/@ayeah77/series/PR-%EB%A6%AC%EB%B7%B0-%EC%BD%94%EB%A9%98%ED%8A%B8)
 
-<br><br>
+<br>
 
 ## 기술 스택
 
