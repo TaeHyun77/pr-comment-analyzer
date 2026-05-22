@@ -25,21 +25,68 @@ class CommentStoreTest {
         Path stateFile = dir.resolve("state.json");
 
         CommentStore first = newStore(stateFile);
-        assertThat(first.isProcessed(1L)).isFalse();
-        first.markProcessed(1L);
-        first.markProcessed(2L);
+        assertThat(first.tryClaim(1L)).isTrue();
+        first.markCompleted(1L);
+        assertThat(first.tryClaim(2L)).isTrue();
+        first.markCompleted(2L);
         first.save();
         assertThat(Files.exists(stateFile)).isTrue();
 
         CommentStore reloaded = newStore(stateFile);
-        assertThat(reloaded.isProcessed(1L)).isTrue();
-        assertThat(reloaded.isProcessed(2L)).isTrue();
-        assertThat(reloaded.isProcessed(3L)).isFalse();
+        assertThat(reloaded.tryClaim(1L)).isFalse();
+        assertThat(reloaded.tryClaim(2L)).isFalse();
+        assertThat(reloaded.tryClaim(3L)).isTrue();
     }
 
     @Test
     void 상태파일이_없어도_빈_상태로_시작한다(@TempDir Path dir) {
         CommentStore store = newStore(dir.resolve("missing.json"));
-        assertThat(store.isProcessed(123L)).isFalse();
+        assertThat(store.tryClaim(123L)).isTrue();
+    }
+
+    @Test
+    void tryClaim은_같은_ID에_대해_한_번만_true이다(@TempDir Path dir) {
+        CommentStore store = newStore(dir.resolve("state.json"));
+
+        assertThat(store.tryClaim(10L)).isTrue();
+        assertThat(store.tryClaim(10L)).isFalse();
+    }
+
+    @Test
+    void markCompleted_후_tryClaim은_false이다(@TempDir Path dir) {
+        Path stateFile = dir.resolve("state.json");
+        CommentStore store = newStore(stateFile);
+
+        assertThat(store.tryClaim(20L)).isTrue();
+        store.markCompleted(20L);
+
+        assertThat(store.tryClaim(20L)).isFalse();
+
+        store.save();
+        CommentStore reloaded = newStore(stateFile);
+        assertThat(reloaded.tryClaim(20L)).isFalse();
+    }
+
+    @Test
+    void release_후에는_다시_tryClaim_가능하다(@TempDir Path dir) {
+        CommentStore store = newStore(dir.resolve("state.json"));
+
+        assertThat(store.tryClaim(30L)).isTrue();
+        store.release(30L);
+        assertThat(store.tryClaim(30L)).isTrue();
+    }
+
+    @Test
+    void release한_ID는_파일에_저장되지_않는다(@TempDir Path dir) {
+        Path stateFile = dir.resolve("state.json");
+        CommentStore store = newStore(stateFile);
+
+        assertThat(store.tryClaim(40L)).isTrue();
+        store.release(40L);
+        store.save();
+
+        CommentStore reloaded = newStore(stateFile);
+        // release 후 save 했으므로 processed에 들어가지 않아 재점유 가능
+        assertThat(reloaded.tryClaim(40L)).isTrue();
     }
 }

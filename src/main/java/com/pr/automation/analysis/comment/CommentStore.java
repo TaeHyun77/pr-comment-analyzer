@@ -18,6 +18,8 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 // 이미 분석한 코멘트 ID를 기억해 중복 처리를 막음, 로컬 JSON 파일에 영속해 재시작 후에도 유지됨
 @Slf4j
@@ -29,6 +31,8 @@ public class CommentStore {
     private final Path stateFile;
     private final ObjectMapper objectMapper;
     private final LinkedHashSet<Long> processed = new LinkedHashSet<>();
+    // 분석이 진행 중인 commentId. 디스크에 영속하지 않음 — 프로세스 종료 시 자동 소실되어야 데드락이 생기지 않음
+    private final Set<Long> inProgress = ConcurrentHashMap.newKeySet();
 
     public CommentStore(PrAnalyzerProperties properties, ObjectMapper objectMapper) {
         this.stateFile = Paths.get(properties.getStateFile());
@@ -52,17 +56,28 @@ public class CommentStore {
         }
     }
 
-    public synchronized boolean isProcessed(long commentId) {
-        return processed.contains(commentId);
+    // 분석권을 점유, 이미 완료됐거나 다른 스레드가 처리 중이면 false
+    public synchronized boolean tryClaim(long commentId) {
+        if (processed.contains(commentId)) {
+            return false;
+        }
+        return inProgress.add(commentId);
     }
 
-    public synchronized void markProcessed(long commentId) {
+    // 분석 완료를 기록, inProgress에서 빼고 processed에 추가
+    public synchronized void markCompleted(long commentId) {
+        inProgress.remove(commentId);
         processed.add(commentId);
         while (processed.size() > MAX_IDS) {
             Iterator<Long> it = processed.iterator();
             it.next();
             it.remove();
         }
+    }
+
+    // 분석 실패 시 점유 해제, processed에는 추가하지 않으므로 같은 commentId 재시도 가능
+    public synchronized void release(long commentId) {
+        inProgress.remove(commentId);
     }
 
     public synchronized void save() {

@@ -48,31 +48,33 @@ class CommentAnalysisServiceTest {
     @Test
     void 미처리_코멘트는_분석후_Slack전송하고_처리기록한다() {
         AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변");
-        when(store.isProcessed(555L)).thenReturn(false);
+        when(store.tryClaim(555L)).thenReturn(true);
         when(analysisAgent.run(any(CommentContext.class), any())).thenReturn(result);
 
         service.analyzeAsync(EVENT);
 
         verify(analysisAgent).run(any(CommentContext.class), any());
         verify(slackNotifier).send(eq(EVENT), eq(result));
-        verify(store).markProcessed(555L);
+        verify(store).markCompleted(555L);
         verify(store).save();
+        verify(store, never()).release(anyLong());
         verify(slackNotifier, never()).sendFailure(any(), any());
     }
 
     @Test
     void 이미_처리한_코멘트는_아무것도_하지_않는다() {
-        when(store.isProcessed(555L)).thenReturn(true);
+        when(store.tryClaim(555L)).thenReturn(false);
 
         service.analyzeAsync(EVENT);
 
         verifyNoInteractions(analysisAgent, slackNotifier);
-        verify(store, never()).markProcessed(anyLong());
+        verify(store, never()).markCompleted(anyLong());
+        verify(store, never()).release(anyLong());
     }
 
     @Test
-    void 분석_실패시_Slack에_실패를_알리고_처리기록은_하지_않는다() {
-        when(store.isProcessed(555L)).thenReturn(false);
+    void 분석_실패시_Slack에_실패를_알리고_release하며_처리기록은_하지_않는다() {
+        when(store.tryClaim(555L)).thenReturn(true);
         RuntimeException boom = new RuntimeException("LLM down");
         when(analysisAgent.run(any(CommentContext.class), any())).thenThrow(boom);
 
@@ -80,7 +82,8 @@ class CommentAnalysisServiceTest {
 
         verify(slackNotifier).sendFailure(EVENT, boom);
         verify(slackNotifier, never()).send(any(), any());
-        verify(store, never()).markProcessed(anyLong());
+        verify(store).release(555L);
+        verify(store, never()).markCompleted(anyLong());
         verify(store, never()).save();
     }
 
@@ -90,7 +93,7 @@ class CommentAnalysisServiceTest {
                 CommentEvent.TYPE_ISSUE_COMMENT, "me/repo", 7, "제목", "본문", null,
                 556L, "일반 코멘트", "user", "url", null, null, null, null);
         AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변");
-        when(store.isProcessed(556L)).thenReturn(false);
+        when(store.tryClaim(556L)).thenReturn(true);
         when(githubClient.fetchPullHeadSha("me/repo", 7)).thenReturn(Optional.of("shaABC"));
         when(analysisAgent.run(any(CommentContext.class), any())).thenReturn(result);
 
@@ -98,21 +101,23 @@ class CommentAnalysisServiceTest {
 
         verify(analysisAgent).run(any(CommentContext.class), any());
         verify(slackNotifier).send(eq(issue), eq(result));
-        verify(store).markProcessed(556L);
+        verify(store).markCompleted(556L);
+        verify(store, never()).release(anyLong());
     }
 
     @Test
-    void headSha를_확보할_수_없으면_실패를_알린다() {
+    void headSha를_확보할_수_없으면_실패를_알리고_release한다() {
         CommentEvent issue = new CommentEvent(
                 CommentEvent.TYPE_ISSUE_COMMENT, "me/repo", 7, "제목", "본문", null,
                 557L, "일반 코멘트", "user", "url", null, null, null, null);
-        when(store.isProcessed(557L)).thenReturn(false);
+        when(store.tryClaim(557L)).thenReturn(true);
         when(githubClient.fetchPullHeadSha("me/repo", 7)).thenReturn(Optional.empty());
 
         service.analyzeAsync(issue);
 
         verify(slackNotifier).sendFailure(eq(issue), any());
         verify(analysisAgent, never()).run(any(), any());
-        verify(store, never()).markProcessed(anyLong());
+        verify(store).release(557L);
+        verify(store, never()).markCompleted(anyLong());
     }
 }
