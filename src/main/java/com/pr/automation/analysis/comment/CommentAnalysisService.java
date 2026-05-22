@@ -35,18 +35,23 @@ public class CommentAnalysisService {
     // 실패 시에도 Slack에 실패 알림 발송
     @Async(AsyncConfig.ANALYSIS_EXECUTOR)
     public void analyzeAsync(CommentEvent event) {
-        if (commentStore.isProcessed(event.getCommentId())) { // 이미 처리한 이벤트인지 확인
-            log.info("이미 처리한 코멘트, 건너뜀: {} comment={}", event.getRepoFullName(), event.getCommentId());
+
+        // 이미 완료됐거나 다른 스레드가 처리 중이면 즉시 종료
+        if (!commentStore.tryClaim(event.getCommentId())) {
+            log.info("이미 처리 중이거나 완료된 코멘트, 건너뜀: {} comment={}",
+                    event.getRepoFullName(), event.getCommentId());
             return;
         }
 
         try {
             AnalysisResult result = analyze(event);
-            commentStore.markProcessed(event.getCommentId());
+            commentStore.markCompleted(event.getCommentId());
             commentStore.save();
             log.info("코멘트 분석 완료: {} #{} comment={} verdict='{}'",
                     event.getRepoFullName(), event.getPrNumber(), event.getCommentId(), result.getVerdict());
         } catch (Exception e) {
+            // 실패 시 점유 해제 - 같은 commentId의 재시도를 가능하게 함
+            commentStore.release(event.getCommentId());
             log.error("코멘트 분석 실패: {} #{} comment={}",
                     event.getRepoFullName(), event.getPrNumber(), event.getCommentId(), e);
             slackNotifier.sendFailure(event, e);
