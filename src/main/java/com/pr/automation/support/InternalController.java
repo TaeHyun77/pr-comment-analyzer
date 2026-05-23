@@ -30,9 +30,10 @@ public class InternalController {
     @PostMapping("/internal/analyze")
     public ResponseEntity<?> analyze(
             @RequestHeader(value = "X-GitHub-Event", required = false, defaultValue = "pull_request_review_comment") String event,
+            @RequestHeader(value = "X-GitHub-Delivery", required = false) String deliveryId,
             @RequestBody byte[] rawBody
     ) {
-        Optional<CommentEvent> extracted = webhookEventHandler.extract(event, rawBody);
+        Optional<CommentEvent> extracted = webhookEventHandler.extract(event, deliveryId, rawBody);
         if (!extracted.isPresent()) {
             return ResponseEntity.noContent().build();
         }

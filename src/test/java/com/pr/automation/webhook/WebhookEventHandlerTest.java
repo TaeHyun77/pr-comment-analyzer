@@ -5,6 +5,7 @@ import com.pr.automation.analysis.comment.CommentAnalysisService;
 import com.pr.automation.analysis.dto.CommentEvent;
 import com.pr.automation.config.GithubProperties;
 import com.pr.automation.config.PrAnalyzerProperties;
+import com.pr.automation.webhook.recovery.DeliveryStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -23,16 +24,19 @@ class WebhookEventHandlerTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private CommentAnalysisService analysisService;
+    private DeliveryStore deliveryStore;
     private WebhookEventHandler handler;
 
     @BeforeEach
     void setUp() {
         analysisService = mock(CommentAnalysisService.class);
+        deliveryStore = mock(DeliveryStore.class);
         handler = new WebhookEventHandler(
                 objectMapper,
-                new GithubProperties("token", "myname", "secret"),
+                new GithubProperties("token", "myname", "secret", null, null),
                 new PrAnalyzerProperties(true, "./state.json", 40, 8, 6, 25000),
-                analysisService);
+                analysisService,
+                deliveryStore);
     }
 
     private byte[] bytes(String s) {
@@ -82,7 +86,7 @@ class WebhookEventHandlerTest {
 
     @Test
     void 내_PR에_타인이_단_리뷰코멘트는_추출된다() {
-        Optional<CommentEvent> ce = handler.extract("pull_request_review_comment",
+        Optional<CommentEvent> ce = handler.extract("pull_request_review_comment", "d-1",
                 bytes(reviewCommentPayload("myname", "reviewer", "User", "created")));
         assertThat(ce).isPresent();
         CommentEvent e = ce.get();
@@ -94,11 +98,12 @@ class WebhookEventHandlerTest {
         assertThat(e.getFilePath()).isEqualTo("src/Foo.java");
         assertThat(e.getLine()).isEqualTo(42);
         assertThat(e.getHeadSha()).isEqualTo("abc123");
+        assertThat(e.getDeliveryId()).isEqualTo("d-1");
     }
 
     @Test
     void 내_PR에_내가_단_코멘트도_기본설정에서는_추출된다() {
-        Optional<CommentEvent> ce = handler.extract("pull_request_review_comment",
+        Optional<CommentEvent> ce = handler.extract("pull_request_review_comment", "d-2",
                 bytes(reviewCommentPayload("myname", "myname", "User", "created")));
         assertThat(ce).isPresent();
     }
@@ -107,41 +112,42 @@ class WebhookEventHandlerTest {
     void includeOwnComments가_false면_내_코멘트는_제외된다() {
         WebhookEventHandler h = new WebhookEventHandler(
                 objectMapper,
-                new GithubProperties("token", "myname", "secret"),
+                new GithubProperties("token", "myname", "secret", null, null),
                 new PrAnalyzerProperties(false, "./state.json", 40, 8, 6, 25000),
-                analysisService);
-        assertThat(h.extract("pull_request_review_comment",
+                analysisService,
+                deliveryStore);
+        assertThat(h.extract("pull_request_review_comment", "d-3",
                 bytes(reviewCommentPayload("myname", "myname", "User", "created")))).isEmpty();
     }
 
     @Test
     void 봇_코멘트는_제외된다() {
-        assertThat(handler.extract("pull_request_review_comment",
+        assertThat(handler.extract("pull_request_review_comment", "d",
                 bytes(reviewCommentPayload("myname", "dependabot", "Bot", "created")))).isEmpty();
-        assertThat(handler.extract("pull_request_review_comment",
+        assertThat(handler.extract("pull_request_review_comment", "d",
                 bytes(reviewCommentPayload("myname", "some-app[bot]", "User", "created")))).isEmpty();
     }
 
     @Test
     void 다른_사람의_PR이면_제외된다() {
-        assertThat(handler.extract("pull_request_review_comment",
+        assertThat(handler.extract("pull_request_review_comment", "d",
                 bytes(reviewCommentPayload("someone-else", "reviewer", "User", "created")))).isEmpty();
     }
 
     @Test
     void action이_created가_아니면_제외된다() {
-        assertThat(handler.extract("pull_request_review_comment",
+        assertThat(handler.extract("pull_request_review_comment", "d",
                 bytes(reviewCommentPayload("myname", "reviewer", "User", "edited")))).isEmpty();
     }
 
     @Test
     void PR이_아닌_이슈_코멘트는_제외된다() {
-        assertThat(handler.extract("issue_comment", bytes(issueCommentPayload(false, "myname")))).isEmpty();
+        assertThat(handler.extract("issue_comment", "d", bytes(issueCommentPayload(false, "myname")))).isEmpty();
     }
 
     @Test
     void 내_PR의_이슈_코멘트는_추출된다() {
-        Optional<CommentEvent> ce = handler.extract("issue_comment", bytes(issueCommentPayload(true, "myname")));
+        Optional<CommentEvent> ce = handler.extract("issue_comment", "d", bytes(issueCommentPayload(true, "myname")));
         assertThat(ce).isPresent();
         assertThat(ce.get().getEventType()).isEqualTo(CommentEvent.TYPE_ISSUE_COMMENT);
         assertThat(ce.get().getFilePath()).isNull();
@@ -150,22 +156,34 @@ class WebhookEventHandlerTest {
 
     @Test
     void 관심없는_이벤트는_제외된다() {
-        assertThat(handler.extract("push", bytes("{}"))).isEmpty();
-        assertThat(handler.extract(null, bytes("{}"))).isEmpty();
+        assertThat(handler.extract("push", "d", bytes("{}"))).isEmpty();
+        assertThat(handler.extract(null, "d", bytes("{}"))).isEmpty();
     }
 
     @Test
-    void handle는_ping이면_분석을_트리거하지_않는다() {
+    void handle는_ping이면_분석을_트리거하지_않고_delivery만_ack한다() {
         handler.handle("ping", "delivery-1", bytes("{\"zen\":\"...\"}"));
         verify(analysisService, never()).analyzeAsync(any());
+        verify(deliveryStore).markReceived("delivery-1");
     }
 
     @Test
-    void handle는_대상_코멘트면_비동기_분석을_트리거한다() {
+    void handle는_대상_코멘트면_비동기_분석을_트리거하고_delivery는_ack하지_않는다() {
         handler.handle("pull_request_review_comment", "delivery-2",
                 bytes(reviewCommentPayload("myname", "reviewer", "User", "created")));
         ArgumentCaptor<CommentEvent> captor = ArgumentCaptor.forClass(CommentEvent.class);
         verify(analysisService).analyzeAsync(captor.capture());
         assertThat(captor.getValue().getCommentId()).isEqualTo(12345L);
+        assertThat(captor.getValue().getDeliveryId()).isEqualTo("delivery-2");
+        // 분석 분기에서는 markReceived를 직접 호출하지 않음 — CommentAnalysisService가 성공 후 호출
+        verify(deliveryStore, never()).markReceived(any());
+    }
+
+    @Test
+    void handle는_필터_탈락이면_delivery를_ack한다() {
+        handler.handle("pull_request_review_comment", "delivery-3",
+                bytes(reviewCommentPayload("someone-else", "reviewer", "User", "created")));
+        verify(analysisService, never()).analyzeAsync(any());
+        verify(deliveryStore).markReceived("delivery-3");
     }
 }

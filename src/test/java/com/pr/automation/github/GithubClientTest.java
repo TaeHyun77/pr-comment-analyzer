@@ -24,12 +24,12 @@ class GithubClientTest {
     @BeforeEach
     void setUp() {
         rt = mock(RestTemplate.class);
-        client = new GithubClient(rt, new GithubProperties("ghp_token", "me", "secret"));
+        client = new GithubClient(rt, new GithubProperties("ghp_token", "me", "secret", null, null));
     }
 
     @Test
     void 토큰_없으면_모든_조회가_empty() {
-        GithubClient disabled = new GithubClient(rt, new GithubProperties("", "me", "secret"));
+        GithubClient disabled = new GithubClient(rt, new GithubProperties("", "me", "secret", null, null));
 
         assertThat(disabled.fetchFileContent("me/repo", "src/Foo.java", "sha")).isEmpty();
         assertThat(disabled.listDirectory("me/repo", "src", "sha")).isEmpty();
