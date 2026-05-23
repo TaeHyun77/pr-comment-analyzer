@@ -11,6 +11,7 @@ import com.pr.automation.common.error.ErrorCode;
 import com.pr.automation.config.AsyncConfig;
 import com.pr.automation.github.GithubClient;
 import com.pr.automation.slack.SlackNotifier;
+import com.pr.automation.webhook.recovery.DeliveryStore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -30,16 +31,18 @@ public class CommentAnalysisService {
     private final CommentAnalysisAgent analysisAgent;
     private final SlackNotifier slackNotifier;
     private final CommentStore commentStore;
+    private final DeliveryStore deliveryStore;
 
     // 중복 코멘트는 건너뛰고, 실패는 로그 + Slack 알림으로만 처리
     // 실패 시에도 Slack에 실패 알림 발송
+    // deliveryStore.markReceived는 분석 성공 시점에만 호출 — 실패 시 호출하지 않아 recoverer가 재전송할 수 있게 함
     @Async(AsyncConfig.ANALYSIS_EXECUTOR)
     public void analyzeAsync(CommentEvent event) {
 
-        // 이미 완료됐거나 다른 스레드가 처리 중이면 즉시 종료
+        // 이미 완료됐거나 다른 스레드가 처리 중이면 즉시 종료. 단, delivery는 ack 처리.
         if (!commentStore.tryClaim(event.getCommentId())) {
-            log.info("이미 처리 중이거나 완료된 코멘트, 건너뜀: {} comment={}",
-                    event.getRepoFullName(), event.getCommentId());
+            log.info("이미 처리 중이거나 완료된 코멘트, 건너뜀: {} comment={}", event.getRepoFullName(), event.getCommentId());
+            deliveryStore.markReceived(event.getDeliveryId());
             return;
         }
 
@@ -47,11 +50,13 @@ public class CommentAnalysisService {
             AnalysisResult result = analyze(event);
             commentStore.markCompleted(event.getCommentId());
             commentStore.save();
+            deliveryStore.markReceived(event.getDeliveryId());
             log.info("코멘트 분석 완료: {} #{} comment={} verdict='{}'",
                     event.getRepoFullName(), event.getPrNumber(), event.getCommentId(), result.getVerdict());
         } catch (Exception e) {
             // 실패 시 점유 해제 - 같은 commentId의 재시도를 가능하게 함
             commentStore.release(event.getCommentId());
+            // deliveryStore.markReceived 호출하지 않음 — 다음 부팅 시 recoverer가 재전송 트리거
             log.error("코멘트 분석 실패: {} #{} comment={}",
                     event.getRepoFullName(), event.getPrNumber(), event.getCommentId(), e);
             slackNotifier.sendFailure(event, e);

@@ -11,6 +11,12 @@ github:
   token: ${GITHUB_TOKEN:}
   login: ${GITHUB_LOGIN:}
   webhook-secret: ${GITHUB_WEBHOOK_SECRET:}
+  # 웹훅 복구 대상 레포 풀네임 목록 (CSV 또는 YAML 리스트). 비어 있으면 복구 비활성
+  repos: ${GITHUB_REPOS:}
+  webhook-recovery:
+    enabled: ${GITHUB_WEBHOOK_RECOVERY_ENABLED:true}
+    lookback-hours: ${GITHUB_WEBHOOK_RECOVERY_LOOKBACK_HOURS:24}
+    state-file: ${GITHUB_WEBHOOK_RECOVERY_STATE_FILE:./pr-analyzer-deliveries.json}
 
 groq:
   api-key: ${GROQ_API_KEY:}
