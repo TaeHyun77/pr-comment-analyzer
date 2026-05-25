@@ -31,5 +31,9 @@ public class GithubProperties {
         private final boolean enabled;
         private final int lookbackHours;
         private final String stateFile;
+        // 운영 중 사각지대 자동 회복용 스케줄러 설정
+        private final boolean schedulerEnabled;
+        private final long schedulerIntervalMs;
+        private final int schedulerLookbackHours; // 현재 시각으로부터 몇 시간 전까지의 deliveries를 복구 대상으로 볼지
     }
 }

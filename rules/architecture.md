@@ -36,6 +36,18 @@ LLM 분석은 단발 호출이 아니라, LLM이 도구로 레포 파일을 스�
 - 웹훅 컨트롤러: 서명 검증 + 빠른 필터(이벤트 타입/action/PR 작성자/봇)만 동기로 하고 즉시 200 반환 ( GitHub은 webhook 응답을 10초(상황에 따라 30초) 안에 받지 못하면 failed로 처리하기 때문 )
 - 분석(LLM 호출): `@Async("analysisExecutor")`로 분리. 비동기 스레드 예외는 `@RestControllerAdvice`가 못 잡으므로 `CommentAnalysisService` 내부에서 try-catch 후 로그 + Slack 실패 알림
 
+## 웹훅 복구 (Redelivery)
+
+webhook 응답을 분석 시작 전에 200으로 반환하므로 GitHub은 우리 쪽 크래시를 인지하지 못하고 자동 재시도하지 않는다. 그 결과 다음 시나리오에서 분석 작업이 영구 손실될 수 있다 — 작업 중/큐 대기 중 크래시, 서비스 다운타임 동안 도착한 webhook, 큐 포화 거부, 네트워크 단절, Slack 자체 장애로 인한 실패 알림 누락.
+
+외부 인프라(Redis/DB) 추가 없이 GitHub Webhook Redelivery API(`POST /repos/{o}/{r}/hooks/{hookId}/deliveries/{id}/attempts`)를 활용해 복구한다. `DeliveryStore`는 "우리가 책임을 다 진 delivery의 guid"를 JSON 파일에 영속하는 ledger로, 부팅 시 메모리에 복원되어 중복 redeliver 요청을 차단한다.
+
+- `markReceived` 호출 타이밍: ping/필터링 탈락은 `WebhookEventHandler`에서 즉시, 분석 대상은 `CommentAnalysisService`가 분석 성공 직후에 호출. **분석 실패 시 호출하지 않음** — 흔적 없음 = 다음 회차 복구 대상이라는 신호.
+- 트리거 둘 — **부팅 시 1회**(`ApplicationReadyEvent`, 24h lookback)로 다운타임 직후 즉시 회복 + **30분 스케줄러**(`@Scheduled`, 1h lookback)로 운영 중 사각지대 자동 회복. 두 진입점 모두 같은 `WebhookRedeliveryRecoverer.recoverNow(int)`를 호출.
+- 식별 알고리즘: `listDeliveries` 응답은 `delivered_at` 내림차순이므로 앞에서부터 순회 → `delivered_at < cutoff`면 break, `deliveryStore.isReceived(guid)`면 skip, 그 외는 `redeliver` 호출. 단일 페이지(per_page=100)로 충분.
+- 수동 운영 엔드포인트: `POST /internal/recovery/run?hours=N`(수동 트리거), `GET /internal/recovery/coverage?hours=N`(발생/처리 코멘트 통계).
+- 한계: GitHub deliveries 보관 ~30일. 30일 이상 다운타임은 복구 불가. 자동 hook 발견은 다중 hook 환경에서 WARN 후 첫 번째 active hook 선택.
+
 ## 외부 호출 시 주의
 
 - Spring Boot 4는 Jackson 3을 사용한다(`tools.jackson.databind.ObjectMapper`, 어노테이션은 `com.fasterxml.jackson.annotation.*` 유지)

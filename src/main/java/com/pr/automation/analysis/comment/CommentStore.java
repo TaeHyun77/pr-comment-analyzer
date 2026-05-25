@@ -56,7 +56,7 @@ public class CommentStore {
         }
     }
 
-    // 분석권을 점유, 이미 완료됐거나 다른 스레드가 처리 중이면 false
+    // 이 commentId를 분석할 권리를 점유하며, 성공하면 true / 이미 점유됐거나 처리 완료면 false 반환
     public synchronized boolean tryClaim(long commentId) {
         if (processed.contains(commentId)) {
             return false;
@@ -64,7 +64,7 @@ public class CommentStore {
         return inProgress.add(commentId);
     }
 
-    // 분석 완료를 기록, inProgress에서 빼고 processed에 추가
+    // 분석 완료 시 호출되며, json 파일에 commentId를 기록 ( inProgress에서 빼고 processed에 추가 )
     public synchronized void markCompleted(long commentId) {
         inProgress.remove(commentId);
         processed.add(commentId);
@@ -80,6 +80,7 @@ public class CommentStore {
         inProgress.remove(commentId);
     }
 
+    // processed 집합을 임시 파일에 통째로 쓴 뒤 원본 자리로 atomic rename — 쓰기 중 크래시해도 원본이 부분 쓰기 상태로 깨지지 않음
     public synchronized void save() {
         try {
             Path tmp = stateFile.resolveSibling(stateFile.getFileName() + ".tmp");

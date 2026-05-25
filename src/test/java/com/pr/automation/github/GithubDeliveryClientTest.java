@@ -30,7 +30,7 @@ class GithubDeliveryClientTest {
     void setUp() {
         rt = mock(RestTemplate.class);
         GithubProperties.WebhookRecovery cfg =
-                new GithubProperties.WebhookRecovery(true, 24, "./d.json");
+                new GithubProperties.WebhookRecovery(true, 24, "./d.json", false, 1800000L, 1);
         client = new GithubDeliveryClient(rt,
                 new GithubProperties("ghp", "me", "secret", Collections.emptyList(), cfg));
     }
@@ -47,7 +47,7 @@ class GithubDeliveryClientTest {
     void 토큰_없으면_모든_호출이_비활성() {
         GithubDeliveryClient disabled = new GithubDeliveryClient(rt,
                 new GithubProperties("", "me", "secret", Collections.emptyList(),
-                        new GithubProperties.WebhookRecovery(true, 24, "./d.json")));
+                        new GithubProperties.WebhookRecovery(true, 24, "./d.json", false, 1800000L, 1)));
         assertThat(disabled.isEnabled()).isFalse();
         assertThat(disabled.findHookId("me/repo")).isEmpty();
         assertThat(disabled.listDeliveries("me/repo", 1L)).isEmpty();
