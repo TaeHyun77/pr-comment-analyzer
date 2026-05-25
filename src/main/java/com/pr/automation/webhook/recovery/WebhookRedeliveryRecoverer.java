@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -46,6 +47,25 @@ public class WebhookRedeliveryRecoverer {
         }
     }
 
+    // 운영 중 사각지대(큐 포화, 강제 종료, Slack 장애, 네트워크 단절) 회복용 정기 스케줄링
+    // 첫 발화는 interval 후 — 부팅 훅과 시점이 겹치지 않게 함
+    @Scheduled(
+            fixedDelayString = "${github.webhook-recovery.scheduler-interval-ms:1800000}",
+            initialDelayString = "${github.webhook-recovery.scheduler-interval-ms:1800000}"
+    )
+    public void scheduledRecover() {
+        GithubProperties.WebhookRecovery cfg = githubProperties.getWebhookRecovery();
+        if (cfg == null || !cfg.isEnabled() || !cfg.isSchedulerEnabled()) {
+            return;
+        }
+        int hours = cfg.getSchedulerLookbackHours() > 0 ? cfg.getSchedulerLookbackHours() : 1;
+        try {
+            recoverNow(hours);
+        } catch (Exception e) {
+            log.warn("스케줄 웹훅 복구 실패", e);
+        }
+    }
+
     public RecoverySummary recoverNow(int lookbackHours) {
         int effectiveHours = lookbackHours > 0 ? lookbackHours : DEFAULT_LOOKBACK_HOURS;
         List<RepoResult> results = new ArrayList<>();
@@ -69,8 +89,7 @@ public class WebhookRedeliveryRecoverer {
             totalTriggered += r.getTriggered();
             totalSkipped += r.getSkipped();
         }
-        log.info("웹훅 복구 전체 완료: 기간={}h triggered={} skipped={}",
-                effectiveHours, totalTriggered, totalSkipped);
+        log.info("웹훅 복구 전체 완료: 기간={}h triggered={} skipped={}", effectiveHours, totalTriggered, totalSkipped);
         return new RecoverySummary(effectiveHours, results, totalTriggered, totalSkipped);
     }
 

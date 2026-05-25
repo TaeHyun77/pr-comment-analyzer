@@ -15,7 +15,7 @@ class DeliveryStoreTest {
 
     private DeliveryStore newStore(Path stateFile) {
         GithubProperties.WebhookRecovery cfg =
-                new GithubProperties.WebhookRecovery(true, 24, stateFile.toString());
+                new GithubProperties.WebhookRecovery(true, 24, stateFile.toString(), false, 1800000L, 1);
         GithubProperties props = new GithubProperties(
                 "token", "me", "secret", Collections.emptyList(), cfg);
         DeliveryStore store = new DeliveryStore(props, new ObjectMapper());

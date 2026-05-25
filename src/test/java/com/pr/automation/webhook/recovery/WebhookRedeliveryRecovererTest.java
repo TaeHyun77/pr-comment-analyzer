@@ -25,8 +25,13 @@ import static org.mockito.Mockito.when;
 class WebhookRedeliveryRecovererTest {
 
     private GithubProperties propsWith(java.util.List<String> repos, boolean enabled) {
+        return propsWith(repos, enabled, false);
+    }
+
+    private GithubProperties propsWith(java.util.List<String> repos, boolean enabled, boolean schedulerEnabled) {
         return new GithubProperties("token", "me", "secret", repos,
-                new GithubProperties.WebhookRecovery(enabled, 24, "./d.json"));
+                new GithubProperties.WebhookRecovery(enabled, 24, "./d.json",
+                        schedulerEnabled, 1800000L, 1));
     }
 
     private GhDelivery delivery(long id, String guid, Instant at) {
@@ -171,5 +176,49 @@ class WebhookRedeliveryRecovererTest {
         r.onStartup();
         verify(client, never()).isEnabled();
         verify(client, never()).findHookId(any());
+    }
+
+    @Test
+    void scheduledRecover_비활성이면_recoverNow_진입_안_함() {
+        GithubDeliveryClient client = mock(GithubDeliveryClient.class);
+        DeliveryStore store = mock(DeliveryStore.class);
+        // 복구 자체는 활성이지만 스케줄러는 비활성
+        WebhookRedeliveryRecoverer r = new WebhookRedeliveryRecoverer(
+                propsWith(Arrays.asList("me/repo"), true, false), client, store);
+
+        r.scheduledRecover();
+        verify(client, never()).isEnabled();
+        verify(client, never()).findHookId(any());
+    }
+
+    @Test
+    void scheduledRecover_복구_자체가_비활성이면_진입_안_함() {
+        GithubDeliveryClient client = mock(GithubDeliveryClient.class);
+        DeliveryStore store = mock(DeliveryStore.class);
+        // 스케줄러는 활성이지만 상위 복구 자체가 비활성 → 진입 안 함
+        WebhookRedeliveryRecoverer r = new WebhookRedeliveryRecoverer(
+                propsWith(Arrays.asList("me/repo"), false, true), client, store);
+
+        r.scheduledRecover();
+        verify(client, never()).isEnabled();
+        verify(client, never()).findHookId(any());
+    }
+
+    @Test
+    void scheduledRecover_활성이면_lookbackHours로_recoverNow_호출됨() {
+        GithubDeliveryClient client = mock(GithubDeliveryClient.class);
+        DeliveryStore store = mock(DeliveryStore.class);
+        when(client.isEnabled()).thenReturn(true);
+        when(client.findHookId("me/repo")).thenReturn(Optional.of(55L));
+        when(client.listDeliveries("me/repo", 55L))
+                .thenReturn(Optional.of(Collections.emptyList()));
+
+        WebhookRedeliveryRecoverer r = new WebhookRedeliveryRecoverer(
+                propsWith(Arrays.asList("me/repo"), true, true), client, store);
+
+        r.scheduledRecover();
+        // 스케줄러는 schedulerLookbackHours(=1)로 recoverNow 호출 → findHookId까지 진입
+        verify(client).findHookId("me/repo");
+        verify(client).listDeliveries("me/repo", 55L);
     }
 }
