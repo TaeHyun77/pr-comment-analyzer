@@ -1,0 +1,30 @@
+services:
+  automation:
+    build: .
+    image: ayeah77/pr-automation:latest
+    container_name: pr-automation
+    restart: unless-stopped
+    expose:
+      - "8080"
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      PR_ANALYZER_STATE_FILE: /app/data/pr-analyzer-state.json
+      GITHUB_WEBHOOK_RECOVERY_STATE_FILE: /app/data/pr-analyzer-deliveries.json
+    volumes:
+      - ./data:/app/data
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: pr-automation-ngrok
+    restart: unless-stopped
+    # NGROK_DOMAIN(static domain)을 .env에 채워두면 URL이 매번 고정됨
+    command: http --url=${NGROK_DOMAIN} automation:8080
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+    ports:
+      - "4040:4040"  # ngrok 로컬 대시보드 (http://localhost:4040)
+    depends_on:
+      - automation

@@ -6,6 +6,8 @@ build/
 ### 앱 런타임 산출물 ###
 pr-analyzer-state.json
 pr-analyzer-state.json.tmp
+pr-analyzer-deliveries.json
+data/
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
 !**/src/test/**/build/
