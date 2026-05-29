@@ -25,3 +25,10 @@ GitHub 웹훅 이벤트 발송 → ngrok 터널 → SpringBoot 수신 ( HMAC 서
 ---
 
 <img width="1231" height="338" alt="ㅁㅁㅁ" src="https://github.com/user-attachments/assets/3de10a6b-85a2-4425-bf6b-c7edcac1b673" />
+
+### 개선점
+---
+-  AI 및 외부 API 호출 시 복구 메커니즘 부재 해결
+-  분석 진행 중 같은 코멘트의 중복 분석
+-  Actionable Slack 알림
+-  Webhook Redelivery 복구 메커니즘 도입
