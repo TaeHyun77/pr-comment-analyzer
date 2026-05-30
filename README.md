@@ -25,12 +25,7 @@ GitHub 웹훅 이벤트 발송 → ngrok 터널 → SpringBoot 수신 ( HMAC 서
 필요한 환경 변수와 각 항목의 의미는 `.env.example` 에 명세되어 있습니다.<br><br>
 
 원래 별도 서버 배포로 ngrok 의존성을 제거할 계획이었으나, 임시로 Docker 이미지화하여 `docker compose up` 한 번으로 애플리케이션과 ngrok 터널이 함께 기동되도록 임시로 구성했습니다.
-  
-```bash
-cp .env.example .env   # 필수 값 채우기 (GITHUB_TOKEN, GROQ_API_KEY, SLACK_WEBHOOK_URL, NGROK_* 등)
-docker compose up -d
-```
-<br>
+추후 별도 서버 배포를 진행할 예정입니다.<br><br>
 
 
 ### 결과
