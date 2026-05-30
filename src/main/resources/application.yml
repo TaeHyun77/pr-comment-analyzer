@@ -37,7 +37,6 @@ slack:
 pr-analyzer:
   include-own-comments: ${PR_ANALYZER_INCLUDE_OWN_COMMENTS:true}
   state-file: ${PR_ANALYZER_STATE_FILE:./pr-analyzer-state.json}
-  file-context-lines: ${PR_ANALYZER_FILE_CONTEXT_LINES:40}
   # 자율 탐색 에이전트 루프 예산(균형), 0 이하면 분석 실패(폴백 없음)
   max-tool-iterations: ${PR_ANALYZER_MAX_TOOL_ITERATIONS:8}
   max-files: ${PR_ANALYZER_MAX_FILES:6}

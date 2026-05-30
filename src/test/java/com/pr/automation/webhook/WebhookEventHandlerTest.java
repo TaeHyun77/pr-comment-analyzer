@@ -34,7 +34,7 @@ class WebhookEventHandlerTest {
         handler = new WebhookEventHandler(
                 objectMapper,
                 new GithubProperties("token", "myname", "secret", null, null),
-                new PrAnalyzerProperties(true, "./state.json", 40, 8, 6, 25000),
+                new PrAnalyzerProperties(true, "./state.json", 8, 6, 25000),
                 analysisService,
                 deliveryStore);
     }
@@ -113,7 +113,7 @@ class WebhookEventHandlerTest {
         WebhookEventHandler h = new WebhookEventHandler(
                 objectMapper,
                 new GithubProperties("token", "myname", "secret", null, null),
-                new PrAnalyzerProperties(false, "./state.json", 40, 8, 6, 25000),
+                new PrAnalyzerProperties(false, "./state.json", 8, 6, 25000),
                 analysisService,
                 deliveryStore);
         assertThat(h.extract("pull_request_review_comment", "d-3",

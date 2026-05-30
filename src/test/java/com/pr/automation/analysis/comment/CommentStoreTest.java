@@ -14,7 +14,7 @@ class CommentStoreTest {
 
     private CommentStore newStore(Path stateFile) {
         CommentStore store = new CommentStore(
-                new PrAnalyzerProperties(true, stateFile.toString(), 40, 8, 6, 25000),
+                new PrAnalyzerProperties(true, stateFile.toString(), 8, 6, 25000),
                 new ObjectMapper());
         store.load();
         return store;
