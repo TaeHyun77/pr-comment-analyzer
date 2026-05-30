@@ -20,6 +20,18 @@ Notification : Slack Incoming Webhook<br><br>
 
 GitHub 웹훅 이벤트 발송 → ngrok 터널 → SpringBoot 수신 ( HMAC 서명 검증 + 이벤트 타입 1차 필터 ) → JSON 페이로드 파싱 + 2차 필터 (생성, PR, 봇 ) → 비동기 분석 디스패치 → LLM 에이전트 루프 → Slack 알림 ( 판정 및 답변 초안 )<br><br>
 
+### 실행 
+---
+필요한 환경 변수와 각 항목의 의미는 `.env.example` 에 명세되어 있습니다.<br><br>
+
+원래 별도 서버 배포로 ngrok 의존성을 제거할 계획이었으나, 임시로 Docker 이미지화하여 `docker compose up` 한 번으로 애플리케이션과 ngrok 터널이 함께 기동되도록 임시로 구성했습니다.
+  
+```bash
+cp .env.example .env   # 필수 값 채우기 (GITHUB_TOKEN, GROQ_API_KEY, SLACK_WEBHOOK_URL, NGROK_* 등)
+docker compose up -d
+```
+<br>
+
 
 ### 결과
 ---
