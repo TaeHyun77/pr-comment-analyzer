@@ -31,6 +31,19 @@ LLM 분석은 단발 호출이 아니라, LLM이 도구로 레포 파일을 스�
   `maxToolIterations<=0`은 오설정으로 보고 진입 전 즉시 실패(`AI_API_ERROR`)
 - 파일 조회 실패는 예외가 아닌 도구 결과 메시지로 회신해 LLM이 경로를 바꿔 재시도
 
+## PR 생성 시 4단계 자동 리뷰 (`com.pr.automation.review`)
+
+코멘트 분석과 별개로, PR `opened` 이벤트를 받아 PR 전체를 4단계로 리뷰하고 결과를 PR 코멘트로 게시한다. 기존 코멘트 분석 경로(`analysis.*`)는 건드리지 않고 별도 패키지로 격리했다.
+
+흐름: `pull_request` opened → `WebhookEventHandler.handlePullRequest`(action=opened·내 PR·봇 제외 필터) → `PrReviewService.reviewAsync`(@Async) → `GithubClient.fetchPullFiles`(변경 파일+patch) → `PrReviewPipeline.run`(4단계) → `PrReviewCommentFormatter`(Markdown) → `GithubClient.createIssueComment` → (옵션) Slack
+
+- 단계: 언어 → 프레임워크/인프라 → 도메인/보안 → 최종검증. 각 단계는 **정확히 1회 LLM 호출**(자율 파일 탐색 없음)이며, 이전 단계 발견을 다음 단계 입력으로 넘긴다. 1~3단계는 `submit_findings`, 최종검증은 `submit_review`를 강제 tool_choice로 호출해 구조화 결과를 받는다.
+- 최종검증 단계가 1~3단계 발견을 종합·중복제거·오탐제거하고, 사람 리뷰어가 판단할 본질적 포인트(`reviewerFocusNotes`)를 도출한다.
+- 중복 방지: `PrReviewStore`가 `repo#pr` 키로 리뷰 완료를 영속(웹훅 재전송 시 재리뷰 차단). `CommentStore`와 동일 패턴, 키 타입만 String.
+- ack 규약은 코멘트 경로와 동일: 성공 시에만 `DeliveryStore.markReceived`, 실패 시 점유 해제 + Slack 실패 알림(복구 대상으로 남김).
+- PR 코멘트 게시는 토큰 쓰기 권한 필요. `GithubClient.createIssueComment`는 읽기 메서드와 달리 실패를 삼키지 않고 예외를 던져 호출자가 인지·재시도하게 한다.
+- 예산: `pr-review.max-files`(diff 파일 수)·`max-patch-chars`(파일별 patch 길이)로 토큰 보호, 초과분은 truncate 후 그 사실을 명시.
+
 ## 동기/비동기 경계
 
 - 웹훅 컨트롤러: 서명 검증 + 빠른 필터(이벤트 타입/action/PR 작성자/봇)만 동기로 하고 즉시 200 반환 ( GitHub은 webhook 응답을 10초(상황에 따라 30초) 안에 받지 못하면 failed로 처리하기 때문 )

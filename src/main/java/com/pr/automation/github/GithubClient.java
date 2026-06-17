@@ -1,5 +1,7 @@
 package com.pr.automation.github;
 
+import com.pr.automation.common.error.AutomationException;
+import com.pr.automation.common.error.ErrorCode;
 import com.pr.automation.config.GithubProperties;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -8,9 +10,11 @@ import lombok.NoArgsConstructor;
 import lombok.RequiredArgsConstructor;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
 import java.nio.charset.StandardCharsets;
@@ -145,6 +149,66 @@ public class GithubClient {
         }
     }
 
+    /**
+     * PR의 변경 파일 목록(파일명/상태/patch)을 가져온다. 첫 페이지(최대 100개)만 조회한다.
+     * 조회 실패는 분석을 막지 않도록 예외를 삼키고 빈 리스트를 반환.
+     */
+    public List<ChangedFile> fetchPullFiles(String repoFullName, int prNumber) {
+        if (!isEnabled()) {
+            return Collections.emptyList();
+        }
+        String[] parts = splitRepo(repoFullName);
+        if (parts == null) {
+            return Collections.emptyList();
+        }
+        try {
+            GhPullFile[] files = githubRestTemplate.getForObject(
+                    "/repos/{owner}/{repo}/pulls/{number}/files?per_page=100",
+                    GhPullFile[].class,
+                    parts[0], parts[1], prNumber);
+            if (files == null) {
+                return Collections.emptyList();
+            }
+            List<ChangedFile> out = new java.util.ArrayList<>(files.length);
+            for (GhPullFile f : files) {
+                out.add(ChangedFile.builder()
+                        .filename(f.getFilename())
+                        .status(f.getStatus())
+                        .patch(f.getPatch())
+                        .additions(f.getAdditions() != null ? f.getAdditions() : 0)
+                        .deletions(f.getDeletions() != null ? f.getDeletions() : 0)
+                        .build());
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("GitHub PR 변경 파일 조회 실패: {} #{}", repoFullName, prNumber, e);
+            return Collections.emptyList();
+        }
+    }
+
+    /**
+     * PR(=issue)에 코멘트를 게시한다. 게시 실패는 호출자가 인지해야 하므로(폴백/재시도) 예외를 던진다.
+     * 토큰에 쓰기 권한(issues/PR write)이 없으면 실패한다.
+     */
+    public void createIssueComment(String repoFullName, int prNumber, String body) {
+        if (!isEnabled()) {
+            throw new AutomationException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.GITHUB_API_ERROR, "GitHub 토큰 미설정으로 코멘트 게시 불가");
+        }
+        String[] parts = splitRepo(repoFullName);
+        if (parts == null) {
+            throw new AutomationException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.GITHUB_API_ERROR, "레포 식별 불가: " + repoFullName);
+        }
+        try {
+            githubRestTemplate.postForObject(
+                    "/repos/{owner}/{repo}/issues/{number}/comments",
+                    Collections.singletonMap("body", body),
+                    Void.class,
+                    parts[0], parts[1], prNumber);
+        } catch (RestClientException e) {
+            throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR, "PR 코멘트 게시 실패: " + repoFullName + " #" + prNumber, e);
+        }
+    }
+
     // path를 직접 URL에 넣어 슬래시를 보존한다 (DefaultUriBuilderFactory의 path-var 인코딩 회피).
     private static String buildContentsUrl(String repoFullName, String path, String ref) {
         String[] parts = splitRepo(repoFullName);
@@ -228,6 +292,17 @@ public class GithubClient {
         private final int size;
     }
 
+    @Getter
+    @Builder
+    @AllArgsConstructor
+    public static class ChangedFile {
+        private final String filename;
+        private final String status;  // "added" | "modified" | "removed" | "renamed" 등
+        private final String patch;   // unified diff (바이너리/대용량이면 null일 수 있음)
+        private final int additions;
+        private final int deletions;
+    }
+
     // --- Jackson 매핑용 GitHub 응답 DTO ---
 
     @Getter
@@ -273,5 +348,16 @@ public class GithubClient {
         private Integer size;
         private String content;
         private String encoding;
+    }
+
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    public static class GhPullFile {
+        private String filename;
+        private String status;
+        private String patch;
+        private Integer additions;
+        private Integer deletions;
     }
 }

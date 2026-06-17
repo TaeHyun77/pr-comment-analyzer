@@ -5,6 +5,9 @@ import com.pr.automation.analysis.comment.CommentAnalysisService;
 import com.pr.automation.analysis.dto.CommentEvent;
 import com.pr.automation.config.GithubProperties;
 import com.pr.automation.config.PrAnalyzerProperties;
+import com.pr.automation.config.PrReviewProperties;
+import com.pr.automation.review.PrReviewService;
+import com.pr.automation.review.dto.PrReviewEvent;
 import com.pr.automation.webhook.recovery.DeliveryStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,18 +28,22 @@ class WebhookEventHandlerTest {
 
     private CommentAnalysisService analysisService;
     private DeliveryStore deliveryStore;
+    private PrReviewService prReviewService;
     private WebhookEventHandler handler;
 
     @BeforeEach
     void setUp() {
         analysisService = mock(CommentAnalysisService.class);
         deliveryStore = mock(DeliveryStore.class);
+        prReviewService = mock(PrReviewService.class);
         handler = new WebhookEventHandler(
                 objectMapper,
                 new GithubProperties("token", "myname", "secret", null, null),
                 new PrAnalyzerProperties(true, "./state.json", 8, 6, 25000),
                 analysisService,
-                deliveryStore);
+                deliveryStore,
+                prReviewService,
+                new PrReviewProperties(true, "./review-state.json", 50, 6000, false));
     }
 
     private byte[] bytes(String s) {
@@ -115,7 +122,9 @@ class WebhookEventHandlerTest {
                 new GithubProperties("token", "myname", "secret", null, null),
                 new PrAnalyzerProperties(false, "./state.json", 8, 6, 25000),
                 analysisService,
-                deliveryStore);
+                deliveryStore,
+                prReviewService,
+                new PrReviewProperties(true, "./review-state.json", 50, 6000, false));
         assertThat(h.extract("pull_request_review_comment", "d-3",
                 bytes(reviewCommentPayload("myname", "myname", "User", "created")))).isEmpty();
     }
@@ -185,5 +194,80 @@ class WebhookEventHandlerTest {
                 bytes(reviewCommentPayload("someone-else", "reviewer", "User", "created")));
         verify(analysisService, never()).analyzeAsync(any());
         verify(deliveryStore).markReceived("delivery-3");
+    }
+
+    // --- PR 생성(opened) 자동 리뷰 경로 ---
+
+    private String pullRequestPayload(String prAuthor, String prAuthorType, String action) {
+        return "{\n"
+                + "  \"action\": \"" + action + "\",\n"
+                + "  \"pull_request\": {\n"
+                + "    \"number\": 7,\n"
+                + "    \"title\": \"A 기능 추가\",\n"
+                + "    \"body\": \"A 기능을 B 방식으로 구현\",\n"
+                + "    \"html_url\": \"https://github.com/myname/myrepo/pull/7\",\n"
+                + "    \"user\": {\"login\": \"" + prAuthor + "\", \"type\": \"" + prAuthorType + "\"},\n"
+                + "    \"head\": {\"sha\": \"abc123\", \"ref\": \"feat/a\"}\n"
+                + "  },\n"
+                + "  \"repository\": {\"full_name\": \"myname/myrepo\", \"name\": \"myrepo\", \"owner\": {\"login\": \"myname\", \"type\": \"User\"}}\n"
+                + "}";
+    }
+
+    @Test
+    void 내가_연_PR_opened는_리뷰_대상으로_추출된다() {
+        Optional<PrReviewEvent> pre = handler.extractPullRequest("d-pr",
+                bytes(pullRequestPayload("myname", "User", "opened")));
+        assertThat(pre).isPresent();
+        PrReviewEvent e = pre.get();
+        assertThat(e.getRepoFullName()).isEqualTo("myname/myrepo");
+        assertThat(e.getPrNumber()).isEqualTo(7);
+        assertThat(e.getHeadSha()).isEqualTo("abc123");
+        assertThat(e.getPrAuthor()).isEqualTo("myname");
+        assertThat(e.getPrHtmlUrl()).isEqualTo("https://github.com/myname/myrepo/pull/7");
+        assertThat(e.getDeliveryId()).isEqualTo("d-pr");
+    }
+
+    @Test
+    void opened가_아닌_PR_액션은_제외된다() {
+        assertThat(handler.extractPullRequest("d", bytes(pullRequestPayload("myname", "User", "synchronize")))).isEmpty();
+        assertThat(handler.extractPullRequest("d", bytes(pullRequestPayload("myname", "User", "closed")))).isEmpty();
+    }
+
+    @Test
+    void 다른_사람이_연_PR이나_봇_PR은_제외된다() {
+        assertThat(handler.extractPullRequest("d", bytes(pullRequestPayload("someone-else", "User", "opened")))).isEmpty();
+        assertThat(handler.extractPullRequest("d", bytes(pullRequestPayload("dependabot", "Bot", "opened")))).isEmpty();
+    }
+
+    @Test
+    void pr_review가_비활성이면_PR은_추출되지_않는다() {
+        WebhookEventHandler disabled = new WebhookEventHandler(
+                objectMapper,
+                new GithubProperties("token", "myname", "secret", null, null),
+                new PrAnalyzerProperties(true, "./state.json", 8, 6, 25000),
+                analysisService,
+                deliveryStore,
+                prReviewService,
+                new PrReviewProperties(false, "./review-state.json", 50, 6000, false));
+        assertThat(disabled.extractPullRequest("d", bytes(pullRequestPayload("myname", "User", "opened")))).isEmpty();
+    }
+
+    @Test
+    void handle는_내_PR_opened면_리뷰를_트리거하고_delivery는_ack하지_않는다() {
+        handler.handle("pull_request", "delivery-pr",
+                bytes(pullRequestPayload("myname", "User", "opened")));
+        ArgumentCaptor<PrReviewEvent> captor = ArgumentCaptor.forClass(PrReviewEvent.class);
+        verify(prReviewService).reviewAsync(captor.capture());
+        assertThat(captor.getValue().getPrNumber()).isEqualTo(7);
+        assertThat(captor.getValue().getDeliveryId()).isEqualTo("delivery-pr");
+        verify(deliveryStore, never()).markReceived(any());
+    }
+
+    @Test
+    void handle는_PR_리뷰_대상이_아니면_delivery를_ack한다() {
+        handler.handle("pull_request", "delivery-pr2",
+                bytes(pullRequestPayload("someone-else", "User", "opened")));
+        verify(prReviewService, never()).reviewAsync(any());
+        verify(deliveryStore).markReceived("delivery-pr2");
     }
 }
