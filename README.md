@@ -22,11 +22,11 @@ Notification : Slack Incoming Webhook<br><br>
 
 ## 동작 흐름
 
-**[ PR 코멘트 분석 ]**
+**PR 코멘트 분석**
 
 GitHub 웹훅 이벤트 발송 → ngrok 터널 → SpringBoot 수신 ( HMAC 서명 검증 + 이벤트 타입 1차 필터 ) → JSON 페이로드 파싱 + 2차 필터 (생성, PR, 봇 ) → 비동기 분석 디스패치 → LLM 에이전트 루프 → Slack 알림 ( 판정 및 답변 초안 )<br><br>
 
-**[ PR 생성 시 4단계 자동 리뷰 ]**
+**PR 생성 시 4단계 자동 리뷰**
 
 PR을 생성하면 언어 → 프레임워크/인프라 → 도메인/보안 → 최종검증의 4단계 순차 리뷰가 자동으로 진행됩니다. 예외처리 누락/null-safety 같은 기계적 이슈를 먼저 잡아 GitHub PR 코멘트로 정리해 게시하므로, 사람 리뷰어는 그게 정리된 상태에서 로직이 맞는지, 이 트레이드오프를 받아들일 만한가 같은 본질적 판단에만 집중할 수 있습니다.
 
@@ -35,7 +35,7 @@ GitHub 웹훅 → 수신/서명 검증 → 내 PR/봇 필터 → 비동기 리�
 - 트리거 : 내가 연 PR의 `opened` 이벤트 ( 봇/타인 PR 제외 ) - GitHub 웹훅에서 Pull requests 이벤트 구독 필요
 - PR 코멘트 게시는 토큰 쓰기 권한 필요 ( classic PAT의 `repo` 스코프 또는 fine-grained의 Pull requests 쓰기 )<br><br>
 
-#### 커리큘럼 : Claude Code로 PR을 세부적으로 나누기
+[ 커리큘럼 : Claude Code로 PR을 세부적으로 나누기 ]
 
 PR이 너무 많은 주제를 담으면 분석 초점이 흐려지기 떄문에, PR을 올리기 전에 Claude Code로 큰 변경을 주제별 PR로 나누면 단계별 리뷰 품질과 비용 모두 개선됩니다. ( 자동화가 아닌, 사람이 따르는 사전 절차 )
 
