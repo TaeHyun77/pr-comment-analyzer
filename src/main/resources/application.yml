@@ -42,6 +42,14 @@ pr-analyzer:
   max-files: ${PR_ANALYZER_MAX_FILES:6}
   max-file-chars: ${PR_ANALYZER_MAX_FILE_CHARS:25000}
 
+# PR 생성(opened) 시 언어→프레임워크/인프라→도메인/보안→최종검증 4단계 자동 리뷰
+pr-review:
+  enabled: ${PR_REVIEW_ENABLED:true}
+  state-file: ${PR_REVIEW_STATE_FILE:./pr-analyzer-review-state.json}
+  max-files: ${PR_REVIEW_MAX_FILES:50}
+  max-patch-chars: ${PR_REVIEW_MAX_PATCH_CHARS:6000}
+  post-to-slack: ${PR_REVIEW_POST_TO_SLACK:false}
+
 logging:
   level:
     # 테스트/디버깅용 DEBUG. 확인이 끝나면 환경변수로 INFO 지정하거나 기본값을 INFO로 되돌릴 것

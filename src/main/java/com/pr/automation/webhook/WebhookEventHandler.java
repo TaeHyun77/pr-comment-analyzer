@@ -5,6 +5,9 @@ import com.pr.automation.analysis.comment.CommentAnalysisService;
 import com.pr.automation.analysis.dto.CommentEvent;
 import com.pr.automation.config.GithubProperties;
 import com.pr.automation.config.PrAnalyzerProperties;
+import com.pr.automation.config.PrReviewProperties;
+import com.pr.automation.review.PrReviewService;
+import com.pr.automation.review.dto.PrReviewEvent;
 import com.pr.automation.webhook.dto.WebhookPayload;
 import com.pr.automation.webhook.recovery.DeliveryStore;
 import lombok.RequiredArgsConstructor;
@@ -25,18 +28,27 @@ import java.util.Optional;
 public class WebhookEventHandler {
     private static final String EVENT_REVIEW_COMMENT = "pull_request_review_comment";
     private static final String EVENT_ISSUE_COMMENT = "issue_comment";
+    private static final String EVENT_PULL_REQUEST = "pull_request";
 
     private final ObjectMapper objectMapper;
     private final GithubProperties githubProperties;
     private final PrAnalyzerProperties prAnalyzerProperties;
     private final CommentAnalysisService commentAnalysisService;
     private final DeliveryStore deliveryStore;
+    private final PrReviewService prReviewService;
+    private final PrReviewProperties prReviewProperties;
 
     public void handle(String event, String deliveryId, byte[] rawBody) {
         // GitHub 웹훅을 새로 생성하거나 설정을 변경하면, GitHub가 가장 먼저 딱 한 번 ping 이벤트를 보내기에 분기함
         if ("ping".equals(event)) {
             log.info("GitHub 웹훅 ping 수신 (delivery={})", deliveryId);
             deliveryStore.markReceived(deliveryId);
+            return;
+        }
+
+        // PR 생성(opened) 이벤트 → 4단계 자동 리뷰 경로
+        if (EVENT_PULL_REQUEST.equals(event)) {
+            handlePullRequest(deliveryId, rawBody);
             return;
         }
 
@@ -60,6 +72,59 @@ public class WebhookEventHandler {
         log.info("코멘트 분석 트리거: {} #{} comment={} (delivery={})", ce.getRepoFullName(), ce.getPrNumber(), ce.getCommentId(), deliveryId);
         // 분석 분기는 여기서 markReceived 호출하지 않음 — 분석 성공 시점에 CommentAnalysisService가 호출
         commentAnalysisService.analyzeAsync(ce);
+    }
+
+    // PR 생성(opened) 처리: 내 PR이고 봇이 아니면 4단계 리뷰 비동기 트리거
+    private void handlePullRequest(String deliveryId, byte[] rawBody) {
+        Optional<PrReviewEvent> extracted = extractPullRequest(deliveryId, rawBody);
+        if (!extracted.isPresent()) {
+            log.debug("PR 리뷰 대상 아님, 무시 (delivery={})", deliveryId);
+            // 리뷰 대상이 아닌 webhook도 ack — 복구 대상에서 제외
+            deliveryStore.markReceived(deliveryId);
+            return;
+        }
+        PrReviewEvent pre = extracted.get();
+        log.info("PR 자동 리뷰 트리거: {} #{} (delivery={})", pre.getRepoFullName(), pre.getPrNumber(), deliveryId);
+        // 분석 분기는 markReceived 호출하지 않음 — 리뷰 성공 시점에 PrReviewService가 호출
+        prReviewService.reviewAsync(pre);
+    }
+
+    // pull_request 페이로드를 파싱/필터링해 PrReviewEvent로 변환 (pr-review 비활성이거나 대상 아니면 empty)
+    public Optional<PrReviewEvent> extractPullRequest(String deliveryId, byte[] rawBody) {
+        if (!prReviewProperties.isEnabled()) {
+            return Optional.empty();
+        }
+        return parsePayload(EVENT_PULL_REQUEST, rawBody)
+                .filter(p -> "opened".equals(p.getAction()))
+                .filter(p -> p.getPullRequest() != null && p.getRepository() != null)
+                .filter(this::passesPrReviewRules)
+                .map(p -> buildPrReviewEvent(deliveryId, p));
+    }
+
+    // PR 작성자가 나이고, 봇이 아니어야 함
+    private boolean passesPrReviewRules(WebhookPayload payload) {
+        WebhookPayload.PullRequest pr = payload.getPullRequest();
+        String prAuthor = pr.getUser() != null ? pr.getUser().getLogin() : null;
+        String prAuthorType = pr.getUser() != null ? pr.getUser().getType() : null;
+
+        if (!isMyPr(prAuthor)) return false;
+        if (isBot(prAuthor, prAuthorType)) return false;
+
+        return true;
+    }
+
+    private PrReviewEvent buildPrReviewEvent(String deliveryId, WebhookPayload payload) {
+        WebhookPayload.PullRequest pr = payload.getPullRequest();
+        return PrReviewEvent.builder()
+                .deliveryId(deliveryId)
+                .repoFullName(payload.getRepository().getFullName())
+                .prNumber(pr.getNumber())
+                .prTitle(pr.getTitle())
+                .prBody(pr.getBody())
+                .headSha(pr.getHead() != null ? pr.getHead().getSha() : null)
+                .prAuthor(pr.getUser() != null ? pr.getUser().getLogin() : null)
+                .prHtmlUrl(pr.getHtmlUrl())
+                .build();
     }
 
     public Optional<CommentEvent> extract(String event, String deliveryId, byte[] rawBody) {

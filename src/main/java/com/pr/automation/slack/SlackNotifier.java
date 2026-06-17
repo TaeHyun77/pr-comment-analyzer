@@ -5,6 +5,8 @@ import com.pr.automation.analysis.dto.CommentEvent;
 import com.pr.automation.common.error.AutomationException;
 import com.pr.automation.common.error.ErrorCode;
 import com.pr.automation.config.SlackProperties;
+import com.pr.automation.review.dto.PrReviewEvent;
+import com.pr.automation.review.dto.PrReviewResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -62,6 +64,50 @@ public class SlackNotifier {
             post(mapOf("text", text, "blocks", blocks));
         } catch (RuntimeException e) {
             log.warn("Slack 실패 알림 전송도 실패", e);
+        }
+    }
+
+    // PR 자동 4단계 리뷰 결과 알림 (post-to-slack=true일 때 보조 채널로 사용)
+    public void sendPrReview(PrReviewEvent event, PrReviewResult result) {
+        if (!slackProperties.isEnabled() || !StringUtils.hasText(slackProperties.getWebhookUrl())) {
+            log.info("Slack 비활성화/미설정 — PR 리뷰 {} #{} 전송 생략", event.getRepoFullName(), event.getPrNumber());
+            return;
+        }
+        int findingCount = result.getMergedFindings() != null ? result.getMergedFindings().size() : 0;
+        String header = "🤖 PR 자동 리뷰 · " + event.getRepoFullName() + " #" + event.getPrNumber();
+
+        List<Map<String, Object>> blocks = new ArrayList<>();
+        blocks.add(mapOf(
+                "type", "header",
+                "text", mapOf("type", "plain_text", "text", abbreviate(header, HEADER_LIMIT), "emoji", true)));
+        blocks.add(section("*종합 요약*\n" + nv(result.getOverallSummary())));
+        blocks.add(section("*확정 이슈* " + findingCount + "건"));
+        blocks.add(section("*리뷰어 집중 포인트*\n" + nv(result.getReviewerFocusNotes())));
+        if (StringUtils.hasText(event.getPrHtmlUrl())) {
+            blocks.add(actionBlock(event.getPrHtmlUrl(), "🔗 PR 열기"));
+        }
+        post(mapOf(
+                "text", "PR #" + event.getPrNumber() + " 자동 리뷰 완료 (이슈 " + findingCount + "건)",
+                "blocks", blocks));
+    }
+
+    public void sendPrReviewFailure(PrReviewEvent event, Throwable error) {
+        if (!slackProperties.isEnabled() || !StringUtils.hasText(slackProperties.getWebhookUrl())) {
+            return;
+        }
+        String errorSummary = error.getClass().getSimpleName() + ": " + abbreviate(error.getMessage(), 300);
+        String text = "PR 자동 리뷰 실패: " + event.getRepoFullName() + " #" + event.getPrNumber() + " — " + errorSummary;
+
+        List<Map<String, Object>> blocks = new ArrayList<>();
+        blocks.add(section(":warning: *PR 자동 리뷰 실패*\n"
+                + event.getRepoFullName() + " #" + event.getPrNumber() + "\n`" + errorSummary + "`"));
+        if (StringUtils.hasText(event.getPrHtmlUrl())) {
+            blocks.add(actionBlock(event.getPrHtmlUrl(), "🔗 PR 열기"));
+        }
+        try {
+            post(mapOf("text", text, "blocks", blocks));
+        } catch (RuntimeException e) {
+            log.warn("Slack PR 리뷰 실패 알림 전송도 실패", e);
         }
     }
 

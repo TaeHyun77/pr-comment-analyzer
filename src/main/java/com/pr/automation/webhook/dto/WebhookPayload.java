@@ -59,6 +59,9 @@ public class WebhookPayload {
         private String body;
         private User user;
         private Head head;
+
+        @JsonProperty("html_url")
+        private String htmlUrl;
     }
 
     @Getter
