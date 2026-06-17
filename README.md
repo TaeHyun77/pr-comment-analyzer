@@ -14,7 +14,7 @@
 
 BackEnd : Spring Boot 2.7, Java 8, Gradle
 
-LLM : Groq ( 사용자에 따라 변경 가능 )
+LLM : Groq ( 비용 이슈 .. 사용자에 따라 변경 가능 )
 
 Integration : GitHub Repository Webhook & REST API
 
