@@ -51,7 +51,7 @@ PR이 너무 많은 주제를 담으면 분석 초점이 흐려지기 떄문에,
 
 **PR 코멘트 분석**
 
-<img width="1231" height="338" alt="ㅁㅁㅁ" src="https://github.com/user-attachments/assets/3de10a6b-85a2-4425-bf6b-c7edcac1b673" />
+<img width="1231" height="338" alt="ㅁㅁㅁ" src="https://github.com/user-attachments/assets/3de10a6b-85a2-4425-bf6b-c7edcac1b673" /><br><br>
 
 **PR 리뷰 분석**
 
