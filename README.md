@@ -21,7 +21,6 @@ Integration : GitHub Repository Webhook & REST API
 Notification : Slack Incoming Webhook<br><br>
 
 ## 동작 흐름
----
 
 ### 1. PR 코멘트 분석
 
