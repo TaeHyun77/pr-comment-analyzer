@@ -64,6 +64,7 @@ public class PrReviewStore {
         return inProgress.add(prKey);
     }
 
+    // 리뷰 완료 시 호출 — inProgress에서 빼고 processed에 추가한 뒤 즉시 영속
     public synchronized void markCompleted(String prKey) {
         inProgress.remove(prKey);
         processed.add(prKey);
@@ -72,6 +73,7 @@ public class PrReviewStore {
             it.next();
             it.remove();
         }
+        save();
     }
 
     // 리뷰 실패 시 점유 해제 — processed에 넣지 않으므로 같은 PR 재시도 가능
@@ -79,7 +81,8 @@ public class PrReviewStore {
         inProgress.remove(prKey);
     }
 
-    public synchronized void save() {
+    // 영속 통로는 markCompleted 하나로 한정 — 패키지 밖에서 직접 호출하지 못하게 package-private 유지
+    synchronized void save() {
         try {
             Path tmp = stateFile.resolveSibling(stateFile.getFileName() + ".tmp");
             objectMapper.writeValue(tmp.toFile(), new State(new ArrayList<>(processed)));

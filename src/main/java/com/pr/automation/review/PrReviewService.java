@@ -51,7 +51,6 @@ public class PrReviewService {
         try {
             review(event);
             reviewStore.markCompleted(key);
-            reviewStore.save();
             deliveryStore.markReceived(event.getDeliveryId());
             log.info("PR 자동 리뷰 완료: {}", key);
         } catch (Exception e) {

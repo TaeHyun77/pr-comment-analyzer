@@ -25,11 +25,11 @@ public class AsyncConfig implements AsyncConfigurer {
     @Bean(ANALYSIS_EXECUTOR)
     public Executor analysisExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(4);
-        executor.setMaxPoolSize(4);
+        executor.setCorePoolSize(10);
+        executor.setMaxPoolSize(20);
 
-        // 큐 포화는 비정상 상황 - 큐의 한계를 200으로 설정
-        executor.setQueueCapacity(2200);
+        // 큐 포화는 비정상 상황 - 큐의 한계를 100으로 설정
+        executor.setQueueCapacity(100);
         executor.setThreadNamePrefix("analysis-");
         // 큐도 포화되어 작업이 거부되면 로그 찍고 재시도하게 됨
         executor.setRejectedExecutionHandler((task, ex) ->

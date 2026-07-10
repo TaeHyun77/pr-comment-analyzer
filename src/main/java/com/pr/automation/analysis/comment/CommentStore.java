@@ -64,7 +64,7 @@ public class CommentStore {
         return inProgress.add(commentId);
     }
 
-    // 분석 완료 시 호출되며, json 파일에 commentId를 기록 ( inProgress에서 빼고 processed에 추가 )
+    // 분석 완료 시 호출되며, json 파일에 commentId를 기록 ( inProgress에서 빼고 processed에 추가 후 즉시 영속 )
     public synchronized void markCompleted(long commentId) {
         inProgress.remove(commentId);
         processed.add(commentId);
@@ -73,6 +73,7 @@ public class CommentStore {
             it.next();
             it.remove();
         }
+        save();
     }
 
     // 분석 실패 시 점유 해제, processed에는 추가하지 않으므로 같은 commentId 재시도 가능
@@ -81,7 +82,8 @@ public class CommentStore {
     }
 
     // processed 집합을 임시 파일에 통째로 쓴 뒤 원본 자리로 atomic rename — 쓰기 중 크래시해도 원본이 부분 쓰기 상태로 깨지지 않음
-    public synchronized void save() {
+    // 영속 통로는 markCompleted 하나로 한정 — 패키지 밖에서 직접 호출하지 못하게 package-private 유지
+    synchronized void save() {
         try {
             Path tmp = stateFile.resolveSibling(stateFile.getFileName() + ".tmp");
             objectMapper.writeValue(tmp.toFile(), new State(new ArrayList<>(processed)));

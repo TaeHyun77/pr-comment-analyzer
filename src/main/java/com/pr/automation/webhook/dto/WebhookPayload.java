@@ -38,6 +38,12 @@ public class WebhookPayload {
         private String diffHunk;
         private Integer line;
 
+        // 코멘트가 달린 diff 쪽: RIGHT=변경 후(head), LEFT=변경 전(base, 삭제된 라인)
+        private String side;
+
+        @JsonProperty("start_line")
+        private Integer startLine; // 멀티라인 코멘트의 시작 라인 (단일 라인이면 null)
+
         @JsonProperty("original_line")
         private Integer originalLine;
 

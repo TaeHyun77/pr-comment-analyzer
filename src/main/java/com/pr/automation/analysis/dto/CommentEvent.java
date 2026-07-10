@@ -31,7 +31,10 @@ public class CommentEvent {
 
     private final String filePath;
     private final String diffHunk;
-    private final Integer line;
+    private final Integer line; // 코멘트 라인 (outdated 코멘트면 null)
+    private final String side; // RIGHT=변경 후(head) 기준, LEFT=변경 전(base) 기준
+    private final Integer startLine; // 멀티라인 코멘트의 시작 라인
+    private final Integer originalLine; // 코멘트 작성 시점 커밋 기준 라인
     private final Long inReplyToId; // 답글인 경우 최상위 부모 코멘트 ID
 
     public boolean isReviewComment() {
