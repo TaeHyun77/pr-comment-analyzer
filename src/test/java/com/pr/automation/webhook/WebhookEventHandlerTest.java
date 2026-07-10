@@ -59,6 +59,8 @@ class WebhookEventHandlerTest {
                 + "    \"path\": \"src/Foo.java\",\n"
                 + "    \"diff_hunk\": \"@@ -1,3 +1,4 @@\\n+line\",\n"
                 + "    \"line\": 42,\n"
+                + "    \"side\": \"RIGHT\",\n"
+                + "    \"original_line\": 42,\n"
                 + "    \"html_url\": \"https://github.com/myname/myrepo/pull/7#discussion_r12345\",\n"
                 + "    \"user\": {\"login\": \"" + commentAuthor + "\", \"type\": \"" + commentAuthorType + "\"}\n"
                 + "  },\n"
@@ -104,8 +106,57 @@ class WebhookEventHandlerTest {
         assertThat(e.getCommentAuthor()).isEqualTo("reviewer");
         assertThat(e.getFilePath()).isEqualTo("src/Foo.java");
         assertThat(e.getLine()).isEqualTo(42);
+        assertThat(e.getSide()).isEqualTo("RIGHT");
+        assertThat(e.getStartLine()).isNull();
+        assertThat(e.getOriginalLine()).isEqualTo(42);
         assertThat(e.getHeadSha()).isEqualTo("abc123");
         assertThat(e.getDeliveryId()).isEqualTo("d-1");
+    }
+
+    // 코멘트 앵커 필드만 바꿔 끼울 수 있는 페이로드 (anchorFieldsJson 예: "\"line\": 42, \"side\": \"LEFT\",")
+    private String reviewCommentPayloadWithAnchor(String anchorFieldsJson) {
+        return "{\n"
+                + "  \"action\": \"created\",\n"
+                + "  \"comment\": {\n"
+                + "    \"id\": 12345,\n"
+                + "    \"body\": \"코멘트\",\n"
+                + "    \"path\": \"src/Foo.java\",\n"
+                + "    \"diff_hunk\": \"@@ -1,3 +1,4 @@\\n+line\",\n"
+                + "    " + anchorFieldsJson + "\n"
+                + "    \"html_url\": \"https://github.com/myname/myrepo/pull/7#discussion_r12345\",\n"
+                + "    \"user\": {\"login\": \"reviewer\", \"type\": \"User\"}\n"
+                + "  },\n"
+                + "  \"pull_request\": {\n"
+                + "    \"number\": 7,\n"
+                + "    \"title\": \"A 기능 추가\",\n"
+                + "    \"body\": \"본문\",\n"
+                + "    \"user\": {\"login\": \"myname\", \"type\": \"User\"},\n"
+                + "    \"head\": {\"sha\": \"abc123\", \"ref\": \"feat/a\"}\n"
+                + "  },\n"
+                + "  \"repository\": {\"full_name\": \"myname/myrepo\", \"name\": \"myrepo\", \"owner\": {\"login\": \"myname\", \"type\": \"User\"}}\n"
+                + "}";
+    }
+
+    @Test
+    void 멀티라인_LEFT_코멘트의_앵커정보가_보존된다() {
+        Optional<CommentEvent> ce = handler.extract("pull_request_review_comment", "d-a1",
+                bytes(reviewCommentPayloadWithAnchor("\"line\": 42, \"side\": \"LEFT\", \"start_line\": 38,")));
+        assertThat(ce).isPresent();
+        CommentEvent e = ce.get();
+        assertThat(e.getLine()).isEqualTo(42);
+        assertThat(e.getSide()).isEqualTo("LEFT");
+        assertThat(e.getStartLine()).isEqualTo(38);
+    }
+
+    @Test
+    void outdated_코멘트는_line이_null이고_originalLine만_보존된다() {
+        Optional<CommentEvent> ce = handler.extract("pull_request_review_comment", "d-a2",
+                bytes(reviewCommentPayloadWithAnchor("\"line\": null, \"original_line\": 99,")));
+        assertThat(ce).isPresent();
+        CommentEvent e = ce.get();
+        // 과거 커밋 기준 라인을 head 기준인 것처럼 합치지 않는다 (폴백 제거)
+        assertThat(e.getLine()).isNull();
+        assertThat(e.getOriginalLine()).isEqualTo(99);
     }
 
     @Test

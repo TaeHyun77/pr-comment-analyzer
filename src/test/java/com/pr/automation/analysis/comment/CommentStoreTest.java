@@ -28,8 +28,7 @@ class CommentStoreTest {
         assertThat(first.tryClaim(1L)).isTrue();
         first.markCompleted(1L);
         assertThat(first.tryClaim(2L)).isTrue();
-        first.markCompleted(2L);
-        first.save();
+        first.markCompleted(2L); // markCompleted가 내부에서 영속
         assertThat(Files.exists(stateFile)).isTrue();
 
         CommentStore reloaded = newStore(stateFile);
@@ -58,11 +57,10 @@ class CommentStoreTest {
         CommentStore store = newStore(stateFile);
 
         assertThat(store.tryClaim(20L)).isTrue();
-        store.markCompleted(20L);
+        store.markCompleted(20L); // markCompleted가 내부에서 영속
 
         assertThat(store.tryClaim(20L)).isFalse();
 
-        store.save();
         CommentStore reloaded = newStore(stateFile);
         assertThat(reloaded.tryClaim(20L)).isFalse();
     }

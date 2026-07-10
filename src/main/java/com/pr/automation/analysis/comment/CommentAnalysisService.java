@@ -49,7 +49,6 @@ public class CommentAnalysisService {
         try {
             AnalysisResult result = analyze(event);
             commentStore.markCompleted(event.getCommentId());
-            commentStore.save();
             deliveryStore.markReceived(event.getDeliveryId());
             log.info("코멘트 분석 완료: {} #{} comment={} verdict='{}'",
                     event.getRepoFullName(), event.getPrNumber(), event.getCommentId(), result.getVerdict());
@@ -94,7 +93,7 @@ public class CommentAnalysisService {
         StringBuilder code = new StringBuilder();
 
         if (StringUtils.hasText(e.getDiffHunk())) {
-            code.append("코멘트가 달린 부분의 diff:\n").append(e.getDiffHunk());
+            code.append("코멘트가 달린 지점의 diff (리뷰어가 본 hunk, 코멘트 라인에서 잘림):\n").append(e.getDiffHunk());
         } else {
             code.append("(인라인 코드 없음 — PR 일반 코멘트)");
         }
@@ -114,9 +113,30 @@ public class CommentAnalysisService {
                 .headSha(e.getHeadSha())
                 .filePath(e.getFilePath())
                 .line(e.getLine())
+                .side(e.getSide())
+                .startLine(e.getStartLine())
+                .originalLine(e.getOriginalLine())
                 .codeContext(code.toString())
+                .filePatch(fetchFilePatch(e))
                 .parentComments(parents)
                 .commentBody(e.getCommentBody())
                 .build();
+    }
+
+    // 코멘트가 달린 파일의 전체 변경 diff(모든 hunk). 미확보 시 null이며 분석은 계속 진행
+    private String fetchFilePatch(CommentEvent e) {
+        if (!e.isReviewComment() || !StringUtils.hasText(e.getFilePath()) || !githubClient.isEnabled()) {
+            return null;
+        }
+        String patch = githubClient.fetchPullFiles(e.getRepoFullName(), e.getPrNumber()).stream()
+                .filter(f -> e.getFilePath().equals(f.getFilename()))
+                .findFirst()
+                .map(GithubClient.ChangedFile::getPatch)
+                .orElse(null);
+        if (patch == null) {
+            log.info("파일 전체 diff 미확보(변경 목록에 없거나 patch 없음): {} #{} {}",
+                    e.getRepoFullName(), e.getPrNumber(), e.getFilePath());
+        }
+        return patch;
     }
 }

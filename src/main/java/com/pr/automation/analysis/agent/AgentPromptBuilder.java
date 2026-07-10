@@ -7,21 +7,22 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
-/**
- * 에이전트 루프에 투입되는 초기 프롬프트를 생성 ( review_comment일 때만 )
- * [ PR 메타 + 코멘트 위치/본문 코멘트 파일 ...]
- */
+/// 에이전트 루프에 사용하는 초기 프롬프트 생성 ( review_comment일 때만 )
 @Component
 @RequiredArgsConstructor
 public class AgentPromptBuilder {
     private static final int PR_BODY_LIMIT = 1_500; // PR 본문 설명 길이 제한
     private static final int CODE_LIMIT = 6_000; // 코멘트 주변 코드 맥락 길이 제한
+    private static final int FILE_PATCH_LIMIT = 6_000; // 파일 전체 변경 diff 길이 제한
     private static final String EVENT_REVIEW_COMMENT = "review_comment";
 
     private final PrAnalyzerProperties prAnalyzerProperties;
 
     // 코멘트가 달린 파일을 미리 한 번 읽어 본문에 끼워 넣음 ( review_comment + filePath 있을 때만 )
-    public String buildInitial(CommentContext context, RepoFileReader reader) {
+    public String buildInitial(
+            CommentContext context,
+            RepoFileReader reader
+    ) {
         String primaryFileContent = null;
 
         if (EVENT_REVIEW_COMMENT.equals(context.getEventType()) && StringUtils.hasText(context.getFilePath())) {
@@ -32,16 +33,20 @@ public class AgentPromptBuilder {
         return agenticUserPrompt(context, primaryFileContent);
     }
 
+    // LLM에게 전달할 프롬프트 작성
+    // 1.
     private String agenticUserPrompt(CommentContext c, String primaryFileContent) {
         StringBuilder sb = new StringBuilder(userPrompt(c));
 
         if (StringUtils.hasText(primaryFileContent)) {
-            sb.append("\n[코멘트가 달린 파일 전체 내용] ").append(c.getFilePath()).append('\n')
-                    .append("```\n").append(primaryFileContent).append("\n```\n")
+            sb.append("\n[코멘트가 달린 파일 전체 내용] ")
+                    .append(c.getFilePath()).append('\n').append("```\n")
+                    .append(primaryFileContent).append("\n```\n")
                     .append("이 파일 전체는 이미 제공됐다. 이 안에서 판단 가능하면 추가 조회 없이 바로 결론을 내라.\n")
                     .append("이 파일이 호출하는 함수의 정의나 참조하는 설정 파일을 확인해야 할 때만 도구로 조회해라.\n");
         } else if (EVENT_REVIEW_COMMENT.equals(c.getEventType()) && StringUtils.hasText(c.getFilePath())) {
-            sb.append("\n[조사 시작점]\n파일 ").append(c.getFilePath())
+            sb.append("\n[조사 시작점]\n파일 ")
+                    .append(c.getFilePath())
                     .append(" 부터 살펴보고, 필요한 다른 파일은 도구로 직접 조회해라.\n");
         }
         return sb.toString();
@@ -58,13 +63,19 @@ public class AgentPromptBuilder {
         sb.append("\n[코멘트 위치]\n");
         if (EVENT_REVIEW_COMMENT.equals(c.getEventType())) {
             sb.append("파일: ").append(orDash(c.getFilePath()));
-            if (c.getLine() != null) sb.append(" (라인 ").append(c.getLine()).append(')');
+            appendLineAnchor(sb, c);
             sb.append('\n');
         } else {
             sb.append("PR 전체에 대한 일반 코멘트\n");
         }
 
         sb.append("\n[관련 코드/맥락]\n").append(abbreviate(orDash(c.getCodeContext()), CODE_LIMIT)).append('\n');
+
+        if (StringUtils.hasText(c.getFilePatch())) {
+            sb.append("\n[이 파일의 전체 변경 diff]\n")
+                    .append("이 PR에서 이 파일에 일어난 모든 변경이다. hunk 헤더 @@ -a,b +c,d @@의 -는 변경 전, +는 변경 후 라인 번호다.\n")
+                    .append("```diff\n").append(abbreviate(c.getFilePatch(), FILE_PATCH_LIMIT)).append("\n```\n");
+        }
 
         if (c.getParentComments() != null && !c.getParentComments().isEmpty()) {
             sb.append("\n[이전 스레드]\n");
@@ -75,6 +86,25 @@ public class AgentPromptBuilder {
 
         sb.append("\n[분석할 리뷰 코멘트]\n").append(orDash(c.getCommentBody())).append('\n');
         return sb.toString();
+    }
+
+    // 라인 번호가 어느 버전(head/base/과거 diff) 기준인지 명시해 잘못된 참조를 막는다
+    private static void appendLineAnchor(StringBuilder sb, CommentContext c) {
+        if (c.getLine() != null) {
+            boolean left = "LEFT".equalsIgnoreCase(c.getSide());
+            sb.append(" (").append(left ? "변경 전(base) 기준 " : "변경 후(head) 기준 ");
+            if (c.getStartLine() != null) {
+                sb.append("라인 ").append(c.getStartLine()).append('~').append(c.getLine());
+            } else {
+                sb.append("라인 ").append(c.getLine());
+            }
+            if (left) {
+                sb.append(" — 삭제된 코드에 달린 코멘트");
+            }
+            sb.append(')');
+        } else if (c.getOriginalLine() != null) {
+            sb.append(" (과거 diff 기준 라인 ").append(c.getOriginalLine()).append(" — 현재 head와 어긋날 수 있음)");
+        }
     }
 
     private static String orDash(String s) {

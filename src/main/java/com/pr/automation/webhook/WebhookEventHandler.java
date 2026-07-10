@@ -197,9 +197,8 @@ public class WebhookEventHandler {
     // 3. 앞서 추출한 정보로 CommentEvent 객체 생성
     private CommentEvent buildCommentEvent(String event, String deliveryId, WebhookPayload payload) {
         WebhookPayload.Comment comment = payload.getComment();
-        Integer line = comment.getLine() != null ? comment.getLine() : comment.getOriginalLine();
 
-        // 공통 필드 매핑
+        // 공통 필드 매핑 — line/originalLine은 기준 커밋이 다르므로 합치지 않고 그대로 보존
         CommentEvent.CommentEventBuilder builder = CommentEvent.builder()
                 .deliveryId(deliveryId)
                 .repoFullName(payload.getRepository().getFullName())
@@ -209,7 +208,10 @@ public class WebhookEventHandler {
                 .commentHtmlUrl(comment.getHtmlUrl())
                 .filePath(comment.getPath())
                 .diffHunk(comment.getDiffHunk())
-                .line(line)
+                .line(comment.getLine())
+                .side(comment.getSide())
+                .startLine(comment.getStartLine())
+                .originalLine(comment.getOriginalLine())
                 .inReplyToId(comment.getInReplyToId());
 
         // 이벤트 타입별 분기 매핑
