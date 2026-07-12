@@ -1,6 +1,5 @@
-package com.pr.automation.analysis.github;
+package com.pr.automation.github;
 
-import com.pr.automation.github.GithubClient;
 import lombok.RequiredArgsConstructor;
 
 import java.util.List;

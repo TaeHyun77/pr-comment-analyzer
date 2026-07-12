@@ -1,11 +1,13 @@
-package com.pr.automation.analysis.agent;
+package com.pr.automation.analysis.comment;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.pr.automation.analysis.agent.AgentPromptBuilder;
+import com.pr.automation.analysis.agent.AgentToolSpecs;
 import com.pr.automation.analysis.dto.AnalysisResult;
 import com.pr.automation.analysis.dto.CommentContext;
-import com.pr.automation.analysis.github.RepoFileReader;
+import com.pr.automation.github.RepoFileReader;
 import com.pr.automation.analysis.llm.GroqChatClient;
 import com.pr.automation.analysis.llm.dto.ChatMessage;
 import com.pr.automation.analysis.llm.dto.ToolCall;
@@ -27,16 +29,11 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/**
- * 코멘트 분석을 위한 에이전트 루프
- * 라운드별로 LLM을 호출하고, tool_call(read_file/list_directory)을 실행하며, submit_analysis 도구 호출로 결과를 받아 종료한다.
- * 외부 통신은 GroqChatClient, 프롬프트는 AgentPromptBuilder, 도구 스키마는 AgentToolSpecs
- */
+// 코멘트 분석을 위한 에이전트 루프
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class CommentAnalysisAgent {
-
     private static final String SYSTEM_AGENTIC = loadPrompt("prompts/agentic-system.md");
     private static final Pattern CODE_FENCE = Pattern.compile("```(?:json)?\\s*(.*?)```", Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
 
@@ -54,6 +51,7 @@ public class CommentAnalysisAgent {
         boolean forceNext = false;
     }
 
+    // LLM 분석
     public AnalysisResult run(CommentContext context, RepoFileReader reader) {
         if (reader == null) {
             throw new AutomationException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.REPO_NOT_READABLE, "reader 미제공");
@@ -62,18 +60,19 @@ public class CommentAnalysisAgent {
             throw new AutomationException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.AI_API_ERROR, "max-tool-iterations가 0 이하로 설정되어 분석 불가");
         }
 
+        // 최대 진행 라운드 수
         int maxRounds = prAnalyzerProperties.getMaxToolIterations();
         AgentState state = new AgentState();
 
-        // 1. 초기 메시지 세팅 (시작 파일 프리페치는 PromptBuilder가 담당)
+        // 1. 초기 프롬프트 세팅
         state.messages.add(ChatMessage.system(SYSTEM_AGENTIC));
         state.messages.add(ChatMessage.user(promptBuilder.buildInitial(context, reader)));
 
+        // 👾 LLM에게 보낸 프롬프트 내용 debug log
         if (log.isDebugEnabled()) {
             try {
                 log.debug("LLM 입력 messages={}", objectMapper.writeValueAsString(state.messages));
-            } catch (Exception ignore) {
-                // 디버그용 직렬화 실패는 무시
+            } catch (Exception ignore) { // 디버그용 직렬화 실패는 무시
             }
         }
 
@@ -82,37 +81,37 @@ public class CommentAnalysisAgent {
             boolean isLastRound = (round == maxRounds - 1);
             boolean forceSubmit = state.forceNext || isLastRound;
 
-            // 환각 방어: 강제 제출 상황이면 엄격한 룰 추가
+            // 환각 방어 : 강제 제출 상황이면 엄격한 룰 추가
             if (forceSubmit && isLastRound) {
-                state.messages.add(ChatMessage.user(
-                        "더 이상 파일을 조회할 예산이 없습니다. 반드시 지금까지 확보한 정보만으로 'submit_analysis' 도구를 호출해 결론을 제출하세요. 알 수 없는 내용은 억지로 지어내지 말고 '확인 불가'로 명시하세요."));
+                state.messages.add(ChatMessage.user("더 이상 파일을 조회할 예산이 없습니다. 반드시 지금까지 확보한 정보만으로 submit_analysis 도구를 호출해 결론을 제출하세요. 알 수 없는 내용은 억지로 지어내지 말고 확인 불가로 명시하세요."));
             }
 
             ChatMessage responseMessage = chatClient.send(state.messages, toolSpecs.tools(forceSubmit), toolSpecs.choice(forceSubmit));
+
+            // 👾 매 라운드 LLM의 응답 debug log
             if (log.isDebugEnabled()) {
                 try {
-                    log.debug("LLM 응답 round={} forceSubmit={} message={}",
-                            round, forceSubmit, objectMapper.writeValueAsString(responseMessage));
-                } catch (Exception ignore) {
-                    // 디버그용 직렬화 실패는 무시
+                    log.debug("LLM 응답 round={} forceSubmit={} message={}", round, forceSubmit, objectMapper.writeValueAsString(responseMessage));
+                } catch (Exception ignore) { // 디버그용 직렬화 실패는 무시
                 }
             }
+
             List<ToolCall> calls = responseMessage.getToolCalls();
 
-            // 도구를 사용하지 않은 경우 처리
+            // 도구를 사용하지 않은 경우
             if (calls == null || calls.isEmpty()) {
-                if (forceSubmit) {
+                if (forceSubmit) { // 이미 강제 모드였는데도 텍스트로 답함 -> 텍스트를 파싱해서 결과 반환하도록
                     AnalysisResult fallbackResult = parseFallback(responseMessage.getContent());
                     logResult("폴백 파싱", fallbackResult);
                     return fallbackResult;
                 }
                 state.messages.add(ChatMessage.assistant(responseMessage.getContent()));
                 state.messages.add(ChatMessage.user("일반 텍스트로 답하지 마세요. 반드시 도구를 호출해야 합니다."));
-                state.forceNext = true;
+                state.forceNext = true; // 다음 라운드는 강제 모드로 실행
                 continue;
             }
 
-            // 도구 실행 및 분석 완료 여부 체크
+            // 도구 사용 및 분석 완료 여부 체크
             state.messages.add(ChatMessage.assistantWithCalls(responseMessage));
             AnalysisResult finalResult = executeToolCalls(calls, state, reader);
 
@@ -198,7 +197,7 @@ public class CommentAnalysisAgent {
         }
     }
 
-    // 디버그용: 최종 분석 결과 전체 내용을 로그로 남긴다(경로 = submit_analysis | 폴백 파싱)
+    // 디버그용 : 최종 분석 결과 전체 내용을 로그로 남깁니다.
     private void logResult(String path, AnalysisResult result) {
         if (!log.isDebugEnabled()) {
             return;

@@ -5,7 +5,7 @@ import lombok.Getter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.ConstructorBinding;
 
-// Slack Incoming Webhook 설정. enabled=false면 전송을 생략하고 분석 결과를 로그에만 남김
+// Slack Incoming Webhook 설정, enabled=false면 전송을 생략하고 분석 결과를 로그에만 남김
 @Getter
 @AllArgsConstructor
 @ConstructorBinding

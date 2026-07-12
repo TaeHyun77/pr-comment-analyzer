@@ -17,27 +17,34 @@ public class AgentToolSpecs {
     public static final String TOOL_LIST_DIR = "list_directory";
     public static final String TOOL_SUBMIT = "submit_analysis";
 
+    // LLM에 넘길 도구 목록을 제시
     public List<Tool> tools(boolean onlySubmit) {
-        if (onlySubmit) {
+        if (onlySubmit) { // onlySubmit 값이 true 라면, LLM 에게 submitTool() 도구만을 제공 ( 지금까지의 정보만으로 결론을 반환하도록 강제 )
             return Collections.singletonList(submitTool());
         }
-        return Arrays.asList(readFileTool(), listDirTool(), submitTool());
+        return Arrays.asList(readFileTool(), listDirTool(), submitTool()); // LLM에게 3가지의 (파일 읽기, 파일 구조 파악, 결론 도출) 도구 제공
     }
 
+    // 매 분석 라운드마다 tools(도구 목록)와 choice(도구들 중 자유 선택인 auto vs 도구 한 가지 강제인 submit)를 세트로 LLM에 전달합니다.
     public Object choice(boolean forceSubmit) {
         return forceSubmit ? forcedChoice() : "auto";
     }
 
+    // LLM에게 넘길 각 도구의 명세
     private Tool readFileTool() {
-        return functionTool(TOOL_READ_FILE,
-                "코멘트가 가리키는 코드가 호출하는 함수의 정의나 참조하는 설정 파일을 확인할 때 사용. 레포는 PR head 커밋 기준.",
-                objectSchema(singletonMap("path", stringProp("조회할 파일의 레포 루트 기준 경로 (예: src/main/Foo.java)")), "path"));
+        return functionTool(
+                TOOL_READ_FILE,
+                "코멘트가 가리키는 코드가 호출하는 함수의 정의나 참조하는 설정 파일을 확인할 때 사용, 레포는 PR head 커밋 기준",
+                objectSchema(singletonMap("path", stringProp("조회할 파일의 레포 루트 기준 경로 (예 : src/main/Foo.java)")), "path")
+        );
     }
 
     private Tool listDirTool() {
-        return functionTool(TOOL_LIST_DIR,
-                "어떤 파일이 어디 있는지 모를 때 디렉터리 구조 탐색.",
-                objectSchema(singletonMap("path", stringProp("나열할 디렉터리 경로. 빈 문자열이면 루트.")), "path"));
+        return functionTool(
+                TOOL_LIST_DIR,
+                "어떤 파일이 어디 있는지 모를 때 디렉터리 구조 탐색",
+                objectSchema(singletonMap("path", stringProp("나열할 디렉터리 경로. 빈 문자열이면 루트.")), "path")
+        );
     }
 
     private Tool submitTool() {
@@ -53,9 +60,11 @@ public class AgentToolSpecs {
         props.put("reasoning", stringProp("판정 근거. 조회한 코드/설정에 기반한 트레이드오프 포함 2~5문장 (한국어)"));
         props.put("suggested_reply", stringProp("코멘트에 달 정중하고 구체적인 답변 초안 (한국어)"));
 
-        return functionTool(TOOL_SUBMIT,
+        return functionTool(
+                TOOL_SUBMIT,
                 "코드 조사를 마친 뒤 최종 분석 결과를 제출. 이 도구 호출로 분석 종료.",
-                objectSchema(props, "comment_summary", "current_approach", "suggested_approach", "verdict", "reasoning", "suggested_reply"));
+                objectSchema(props, "comment_summary", "current_approach", "suggested_approach", "verdict", "reasoning", "suggested_reply")
+        );
     }
 
     private Object forcedChoice() {

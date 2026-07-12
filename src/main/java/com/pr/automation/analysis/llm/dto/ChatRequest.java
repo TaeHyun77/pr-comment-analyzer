@@ -7,7 +7,7 @@ import lombok.Getter;
 
 import java.util.List;
 
-// OpenAI 호환 chat completion 요청
+// LLM에게 보내는 요청
 @Getter
 @AllArgsConstructor
 @JsonInclude(JsonInclude.Include.NON_NULL)

@@ -6,7 +6,7 @@ import lombok.Getter;
 
 import java.util.List;
 
-// LLM에 전달하기 위해 가공한 분석 컨텍스트
+// LLM에 전달하기 위해 가공한 컨텍스트 정보
 @Getter
 @Builder
 @AllArgsConstructor

@@ -15,7 +15,7 @@ public class CommentEvent {
     private final String eventType; // "review_comment" or "issue_comment"
     private final String repoFullName;
 
-    // 웹훅 delivery 식별자 (X-GitHub-Delivery 헤더). 복구 ledger 매칭 키
+    // 웹훅 delivery 식별자 (X-GitHub-Delivery 헤더) - 복구 ledger 매칭 키
     private final String deliveryId;
 
     private final int prNumber;

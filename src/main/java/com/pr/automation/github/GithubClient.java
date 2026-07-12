@@ -24,7 +24,7 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * GitHub REST API 호출. 토큰이 없으면 비활성 상태이며 모든 조회가 empty()를 반환
+ * GitHub REST API 호출 - 토큰이 없으면 비활성 상태이며 모든 조회가 empty()를 반환
  * 조회 실패는 분석을 막지 않도록 예외를 삼키고 빈 값을 반환
  */
 @Slf4j
@@ -38,52 +38,56 @@ public class GithubClient {
         return StringUtils.hasText(githubProperties.getToken());
     }
 
-    // PR 리뷰 코멘트 단건 조회 (답글의 부모 코멘트 등)
+    // PR 리뷰 코멘트 단건을 조회 - 답글의 부모 코멘트를 조회하기 위해 사용
     public Optional<FetchedComment> fetchReviewComment(String repoFullName, long commentId) {
-        if (!isEnabled()) {
-            return Optional.empty();
-        }
+        if (!isEnabled()) return Optional.empty();
+
         String[] parts = splitRepo(repoFullName);
         if (parts == null) {
             return Optional.empty();
         }
+
         try {
             GhComment comment = githubRestTemplate.getForObject(
                     "/repos/{owner}/{repo}/pulls/comments/{id}",
                     GhComment.class,
-                    parts[0], parts[1], commentId);
-            if (comment == null) {
-                return Optional.empty();
-            }
+                    parts[0], parts[1], commentId
+            );
+            if (comment == null) return Optional.empty();
+
             String author = comment.getUser() != null && comment.getUser().getLogin() != null
                     ? comment.getUser().getLogin()
                     : "";
             String body = comment.getBody() != null ? comment.getBody() : "";
+
             return Optional.of(FetchedComment.builder()
                     .id(commentId)
                     .author(author)
                     .body(body)
-                    .build());
+                    .build()
+            );
         } catch (Exception e) {
             log.warn("GitHub 코멘트 조회 실패: {} comment={}", repoFullName, commentId, e);
             return Optional.empty();
         }
     }
 
-    // PR의 현재 head 커밋 SHA 조회 (issue_comment처럼 페이로드에 head SHA가 없을 때 사용)
+    // PR의 현재 head 커밋 SHA 조회 ( issue_comment처럼 페이로드에 head SHA가 없을 때 사용 )
+    // 이 PR 브랜치의 최신 커밋( 변경이 다 반영된 after 상태 ) 을 조회해, 파일들을 그 기준으로 읽기 위한 것
     public Optional<String> fetchPullHeadSha(String repoFullName, int prNumber) {
-        if (!isEnabled()) {
-            return Optional.empty();
-        }
+        if (!isEnabled()) return Optional.empty();
+
         String[] parts = splitRepo(repoFullName);
         if (parts == null) {
             return Optional.empty();
         }
+
         try {
             GhPull pull = githubRestTemplate.getForObject(
                     "/repos/{owner}/{repo}/pulls/{number}",
                     GhPull.class,
-                    parts[0], parts[1], prNumber);
+                    parts[0], parts[1], prNumber
+            );
             if (pull == null || pull.getHead() == null || !StringUtils.hasText(pull.getHead().getSha())) {
                 return Optional.empty();
             }
@@ -94,14 +98,10 @@ public class GithubClient {
         }
     }
 
-    /**
-     * 레포의 특정 파일 내용을 가져온다. ref가 null이면 기본 브랜치 기준.
-     * 파일이 아닌(디렉터리/심볼릭링크 등) 경로면 empty.
-     */
+    // 특정 커밋을 기준으로 레포의 파일 하나 내용을 읽어옴, 파일이 아닌( 디렉터리/심볼릭링크 등 ) 경로면 empty
     public Optional<FetchedFile> fetchFileContent(String repoFullName, String path, String ref) {
-        if (!isEnabled()) {
-            return Optional.empty();
-        }
+        if (!isEnabled()) return Optional.empty();
+
         String url = buildContentsUrl(repoFullName, path, ref);
         if (url == null) {
             return Optional.empty();
@@ -117,11 +117,10 @@ public class GithubClient {
         }
     }
 
-    // 디렉터리 안의 파일/하위디렉터리 목록을 가져온다. path가 빈 문자열이면 레포 루트.
+    // 디렉터리 안의 파일/하위디렉터리 목록을 가져옴 ( path가 빈 문자열이면 레포 루트 )
     public Optional<List<DirEntry>> listDirectory(String repoFullName, String path, String ref) {
-        if (!isEnabled()) {
-            return Optional.empty();
-        }
+        if (!isEnabled()) return Optional.empty();
+
         String url = buildContentsUrl(repoFullName, path, ref);
         if (url == null) {
             return Optional.empty();
@@ -138,7 +137,8 @@ public class GithubClient {
                         .path(c.getPath())
                         .type(c.getType())
                         .size(c.getSize() != null ? c.getSize() : 0)
-                        .build());
+                        .build()
+                );
             }
             return Optional.of(out);
         } catch (HttpClientErrorException.NotFound e) {
@@ -150,13 +150,12 @@ public class GithubClient {
     }
 
     /**
-     * PR의 변경 파일 목록(파일명/상태/patch)을 가져온다. 첫 페이지(최대 100개)만 조회한다.
-     * 조회 실패는 분석을 막지 않도록 예외를 삼키고 빈 리스트를 반환.
+     * PR의 변경 파일 목록(파일명/상태/patch)을 가져옴, 첫 페이지(최대 100개)만 조회
+     * 조회 실패는 분석을 막지 않도록 예외를 삼키고 빈 리스트를 반환
      */
     public List<ChangedFile> fetchPullFiles(String repoFullName, int prNumber) {
-        if (!isEnabled()) {
-            return Collections.emptyList();
-        }
+        if (!isEnabled()) return Collections.emptyList();
+
         String[] parts = splitRepo(repoFullName);
         if (parts == null) {
             return Collections.emptyList();
@@ -177,7 +176,8 @@ public class GithubClient {
                         .patch(f.getPatch())
                         .additions(f.getAdditions() != null ? f.getAdditions() : 0)
                         .deletions(f.getDeletions() != null ? f.getDeletions() : 0)
-                        .build());
+                        .build()
+                );
             }
             return out;
         } catch (Exception e) {
@@ -187,13 +187,14 @@ public class GithubClient {
     }
 
     /**
-     * PR(=issue)에 코멘트를 게시한다. 게시 실패는 호출자가 인지해야 하므로(폴백/재시도) 예외를 던진다.
-     * 토큰에 쓰기 권한(issues/PR write)이 없으면 실패한다.
+     * PR(=issue)에 코멘트를 작성 -> 리뷰 결과를 PR 코멘트로 올리는 용도
+     * 게시 실패는 호출자가 인지해야 하므로(폴백/재시도) 예외를 던집니다, 토큰에 쓰기 권한(issues/PR write)이 없으면 실패
      */
     public void createIssueComment(String repoFullName, int prNumber, String body) {
         if (!isEnabled()) {
             throw new AutomationException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.GITHUB_API_ERROR, "GitHub 토큰 미설정으로 코멘트 게시 불가");
         }
+
         String[] parts = splitRepo(repoFullName);
         if (parts == null) {
             throw new AutomationException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.GITHUB_API_ERROR, "레포 식별 불가: " + repoFullName);
@@ -209,7 +210,7 @@ public class GithubClient {
         }
     }
 
-    // path를 직접 URL에 넣어 슬래시를 보존한다 (DefaultUriBuilderFactory의 path-var 인코딩 회피).
+    // path를 직접 URL에 넣어 슬래시를 보존 (DefaultUriBuilderFactory의 path-var 인코딩 회피)
     private static String buildContentsUrl(String repoFullName, String path, String ref) {
         String[] parts = splitRepo(repoFullName);
         if (parts == null || path == null) {

@@ -81,7 +81,7 @@ public class GithubDeliveryClient {
         }
     }
 
-    // hook의 최근 deliveries 조회, 응답은 delivered_at 내림차순
+    // hook의 최근 delivery 목록
     public Optional<List<GhDelivery>> listDeliveries(String repoFullName, long hookId) {
         if (!isEnabled()) {
             return Optional.empty();
@@ -105,7 +105,7 @@ public class GithubDeliveryClient {
         }
     }
 
-    // delivery 재전송 요청, 성공(2xx) 시 true
+    // delivery 재전송, 2xx면 true
     public boolean redeliver(String repoFullName, long hookId, long deliveryId) {
         if (!isEnabled()) {
             return false;
