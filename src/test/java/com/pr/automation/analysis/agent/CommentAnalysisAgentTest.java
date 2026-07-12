@@ -1,9 +1,10 @@
 package com.pr.automation.analysis.agent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.pr.automation.analysis.comment.CommentAnalysisAgent;
 import com.pr.automation.analysis.dto.AnalysisResult;
 import com.pr.automation.analysis.dto.CommentContext;
-import com.pr.automation.analysis.github.RepoFileReader;
+import com.pr.automation.github.RepoFileReader;
 import com.pr.automation.analysis.llm.GroqChatClient;
 import com.pr.automation.analysis.llm.dto.ChatMessage;
 import com.pr.automation.analysis.llm.dto.FunctionCall;

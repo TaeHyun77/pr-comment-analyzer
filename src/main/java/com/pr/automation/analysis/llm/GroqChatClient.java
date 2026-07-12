@@ -30,7 +30,6 @@ import java.util.concurrent.ThreadLocalRandom;
 @Component
 @RequiredArgsConstructor
 public class GroqChatClient {
-
     private static final int MAX_ATTEMPTS = 3;
     private static final long INITIAL_BACKOFF_MS = 1000L;
     private static final int BODY_LOG_LIMIT = 500;
@@ -38,7 +37,7 @@ public class GroqChatClient {
     private final RestTemplate groqRestTemplate;
     private final GroqProperties groqProperties;
 
-    // 한 라운드의 응답 메시지를 반환. 응답 형태가 비정상이면 예외.
+    // 한 라운드의 응답 메시지를 반환. 응답 형태가 비정상이면 예외
     public ChatMessage send(List<ChatMessage> messages, List<Tool> tools, Object toolChoice) {
         ChatRequest request = new ChatRequest(
                 groqProperties.getModel(),
@@ -56,7 +55,6 @@ public class GroqChatClient {
             try {
                 ChatResponse response = groqRestTemplate.postForObject("/chat/completions", request, ChatResponse.class);
                 return validateAndGetMessage(response);
-
             } catch (HttpStatusCodeException e) {
                 HttpStatus status = e.getStatusCode();
 
@@ -76,14 +74,14 @@ public class GroqChatClient {
                 backoffMillis = handleRetry(++attempt, backoffMillis, "네트워크 연결 오류(" + e.getMessage() + ")", e);
 
             } catch (RestClientException e) {
-                // 4) catch-all - 응답 매핑 실패, UnknownContentType, 향후 새 하위 예외 등.
-                //    예외 누수를 봉쇄해 호출자(@Async 경계 포함)가 항상 AutomationException만 보게 함.
+                // 4) catch-all - 응답 매핑 실패, UnknownContentType, 향후 새 하위 예외 등
+                // 예외 누수를 봉쇄해 호출자(@Async 경계 포함)가 항상 AutomationException만 보게 함
                 log.error("Groq API 호출 중 처리되지 않은 예외: {}", e.getMessage(), e);
                 throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.AI_API_ERROR, "Groq API 호출 중 처리되지 않은 예외: " + e.getMessage(), e);
             }
         }
 
-        // 도달 불가 - while 안의 모든 경로가 return 또는 throw로 종료됨. 방어적 안전망.
+        // 도달 불가 - while 안의 모든 경로가 return 또는 throw로 종료됨
         throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.AI_API_ERROR, "알 수 없는 오류로 Groq 호출 실패 (루프 이탈)");
     }
 
@@ -97,7 +95,7 @@ public class GroqChatClient {
         return currentBackoff * 2;
     }
 
-    // Full Jitter: 0 ~ maxMillis 사이 무작위, 동시 호출들의 retry 타이밍을 분산하기 위함
+    // 재시도 시간 계산
     protected void sleepWithFullJitter(long maxMillis) {
         try {
             long jitter = ThreadLocalRandom.current().nextLong(maxMillis + 1);
@@ -108,14 +106,15 @@ public class GroqChatClient {
         }
     }
 
+    // 응답에서 message 추출
     private ChatMessage validateAndGetMessage(ChatResponse response) {
-        if (response == null || response.getChoices() == null || response.getChoices().isEmpty()
-                || response.getChoices().get(0).getMessage() == null) {
+        if (response == null || response.getChoices() == null || response.getChoices().isEmpty() || response.getChoices().get(0).getMessage() == null) {
             throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.AI_API_ERROR, "AI API의 빈 응답");
         }
         return response.getChoices().get(0).getMessage();
     }
 
+    // 로그용 문자열 축약
     private static String abbreviate(String s, int max) {
         if (s == null || s.isEmpty()) return "(빈 응답)";
         return s.length() <= max ? s : s.substring(0, max) + "…";

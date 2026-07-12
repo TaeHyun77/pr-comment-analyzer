@@ -14,8 +14,7 @@ import java.time.Duration;
 @Configuration
 @RequiredArgsConstructor
 public class RestTemplateConfig {
-
-    // 외부 API 무한 대기 방지용 타임아웃. 환경별 튜닝이 필요해지면 *Properties로 승격한다.
+    // 외부 API 무한 대기 방지용 타임아웃. 환경별 튜닝이 필요해지면 *Properties로 승격
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration GROQ_READ_TIMEOUT = Duration.ofSeconds(60);
     private static final Duration DEFAULT_READ_TIMEOUT = Duration.ofSeconds(10);

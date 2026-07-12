@@ -1,13 +1,13 @@
 package com.pr.automation.analysis.agent;
 
 import com.pr.automation.analysis.dto.CommentContext;
-import com.pr.automation.analysis.github.RepoFileReader;
+import com.pr.automation.github.RepoFileReader;
 import com.pr.automation.config.PrAnalyzerProperties;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
-/// 에이전트 루프에 사용하는 초기 프롬프트 생성 ( review_comment일 때만 )
+// 에이전트 루프에 사용하는 초기 프롬프트 생성 ( review_comment 이거나 아닌 경우 )
 @Component
 @RequiredArgsConstructor
 public class AgentPromptBuilder {
@@ -18,12 +18,12 @@ public class AgentPromptBuilder {
 
     private final PrAnalyzerProperties prAnalyzerProperties;
 
-    // 코멘트가 달린 파일을 미리 한 번 읽어 본문에 끼워 넣음 ( review_comment + filePath 있을 때만 )
+    // 코멘트가 달린 파일을 읽어 본문에 끼워 넣음 ( review_comment + filePath 있을 때만 )
     public String buildInitial(
             CommentContext context,
             RepoFileReader reader
     ) {
-        String primaryFileContent = null;
+        String primaryFileContent = null; // 코멘트가 달린 파일 내용
 
         if (EVENT_REVIEW_COMMENT.equals(context.getEventType()) && StringUtils.hasText(context.getFilePath())) {
             primaryFileContent = reader.readFile(context.getFilePath())
@@ -34,15 +34,14 @@ public class AgentPromptBuilder {
     }
 
     // LLM에게 전달할 프롬프트 작성
-    // 1.
     private String agenticUserPrompt(CommentContext c, String primaryFileContent) {
-        StringBuilder sb = new StringBuilder(userPrompt(c));
+        StringBuilder sb = new StringBuilder(userPrompt(c)); // PR에 대한 기본적인 정보 프롬프트
 
         if (StringUtils.hasText(primaryFileContent)) {
             sb.append("\n[코멘트가 달린 파일 전체 내용] ")
                     .append(c.getFilePath()).append('\n').append("```\n")
                     .append(primaryFileContent).append("\n```\n")
-                    .append("이 파일 전체는 이미 제공됐다. 이 안에서 판단 가능하면 추가 조회 없이 바로 결론을 내라.\n")
+                    .append("이 파일 전체는 이미 제공됐으므로, 이것만으로 판단 가능하면 추가 조회 없이 바로 결론을 내라.\n")
                     .append("이 파일이 호출하는 함수의 정의나 참조하는 설정 파일을 확인해야 할 때만 도구로 조회해라.\n");
         } else if (EVENT_REVIEW_COMMENT.equals(c.getEventType()) && StringUtils.hasText(c.getFilePath())) {
             sb.append("\n[조사 시작점]\n파일 ")
@@ -55,6 +54,7 @@ public class AgentPromptBuilder {
     // PR 정보, 코멘트 위치, diff, 부모 스레드, 코멘트 본문 등등
     private String userPrompt(CommentContext c) {
         StringBuilder sb = new StringBuilder();
+
         sb.append("[PR 정보]\n")
                 .append("저장소: ").append(c.getRepoFullName()).append("  PR #").append(c.getPrNumber()).append('\n')
                 .append("제목: ").append(orDash(c.getPrTitle())).append('\n')

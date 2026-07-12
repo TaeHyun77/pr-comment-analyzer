@@ -1,7 +1,7 @@
 package com.pr.automation.analysis.agent;
 
 import com.pr.automation.analysis.dto.CommentContext;
-import com.pr.automation.analysis.github.RepoFileReader;
+import com.pr.automation.github.RepoFileReader;
 import com.pr.automation.config.PrAnalyzerProperties;
 import org.junit.jupiter.api.Test;
 

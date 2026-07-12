@@ -7,6 +7,7 @@ import lombok.Setter;
 
 import java.util.List;
 
+// LLM에게 받는 응답
 @Getter
 @Setter
 @NoArgsConstructor

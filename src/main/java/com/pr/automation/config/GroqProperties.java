@@ -5,7 +5,7 @@ import lombok.Getter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.ConstructorBinding;
 
-// Groq 설정.
+// Groq 설정
 @Getter
 @AllArgsConstructor
 @ConstructorBinding

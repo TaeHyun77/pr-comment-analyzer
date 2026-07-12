@@ -8,7 +8,7 @@ import lombok.Setter;
 
 import java.util.List;
 
-// OpenAI 호환 chat message
+// LLM 대화에 오가는 메시지 DTO ( 시스템 지시 / 사용자 프롬프트 / LLM 응답 / 도구 결과 ) - role로 구분
 @Getter
 @Setter
 @NoArgsConstructor

@@ -1,6 +1,6 @@
 package com.pr.automation.analysis;
 
-import com.pr.automation.analysis.agent.CommentAnalysisAgent;
+import com.pr.automation.analysis.comment.CommentAnalysisAgent;
 import com.pr.automation.analysis.comment.CommentAnalysisService;
 import com.pr.automation.analysis.comment.CommentStore;
 import com.pr.automation.analysis.dto.AnalysisResult;

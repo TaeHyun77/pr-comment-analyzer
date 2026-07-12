@@ -13,7 +13,7 @@ import java.util.concurrent.Executor;
 
 /**
  * 코멘트 분석을 웹훅 응답 스레드와 분리해 비동기로 처리하기 위한 설정
- * GitHub 웹훅은 ~10초 내 2xx 응답을 기대하므로 분석(LLM 호출)은 별도 풀에서 돌린다
+ * GitHub 웹훅은 ~10초 내 2xx 응답을 기대하므로 분석(LLM 호출)은 별도 풀에서 돌립니다.
  */
 @Slf4j
 @Configuration
