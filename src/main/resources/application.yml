@@ -11,38 +11,37 @@ github:
   token: ${GITHUB_TOKEN:}
   login: ${GITHUB_LOGIN:}
   webhook-secret: ${GITHUB_WEBHOOK_SECRET:}
-  # 웹훅 복구 대상 레포 풀네임 목록 (CSV 또는 YAML 리스트). 비어 있으면 복구 비활성
   repos: ${GITHUB_REPOS:}
   webhook-recovery:
     enabled: ${GITHUB_WEBHOOK_RECOVERY_ENABLED:true}
     lookback-hours: ${GITHUB_WEBHOOK_RECOVERY_LOOKBACK_HOURS:24}
     state-file: ${GITHUB_WEBHOOK_RECOVERY_STATE_FILE:./pr-analyzer-deliveries.json}
-    # 운영 중 사각지대 회복용 스케줄러, interval-ms는 milliseconds 단위
     scheduler-enabled: ${GITHUB_WEBHOOK_RECOVERY_SCHEDULER_ENABLED:true}
     scheduler-interval-ms: ${GITHUB_WEBHOOK_RECOVERY_SCHEDULER_INTERVAL_MS:1800000}
     scheduler-lookback-hours: ${GITHUB_WEBHOOK_RECOVERY_SCHEDULER_LOOKBACK_HOURS:1}
 
 groq:
-  api-key: ${GROQ_API_KEY:}
-  base-url: ${GROQ_BASE_URL:https://api.groq.com/openai/v1}
-  model: ${GROQ_MODEL:llama-3.3-70b-versatile}
-  # submit_analysis 도구의 한글 6필드 인자를 수용하려면 1024로는 부족
-  max-tokens: ${GROQ_MAX_TOKENS:2048}
-  temperature: ${GROQ_TEMPERATURE:0.3}
+  api-key: ${LLM_API_KEY:}
+  base-url: ${LLM_BASE_URL:https://api.groq.com/openai/v1}
+  model: ${LLM_MODEL:llama-3.3-70b-versatile}
+  max-tokens: ${LLM_MAX_TOKENS:2048}
+  temperature: ${LLM_TEMPERATURE:0.3}
+  read-timeout-ms: ${LLM_READ_TIMEOUT_MS:60000}
+  max-attempts: ${LLM_MAX_ATTEMPTS:3}
 
 slack:
   enabled: ${SLACK_ENABLED:true}
   webhook-url: ${SLACK_WEBHOOK_URL:}
 
 pr-analyzer:
+  enabled: ${PR_ANALYZER_ENABLED:true}
   include-own-comments: ${PR_ANALYZER_INCLUDE_OWN_COMMENTS:true}
   state-file: ${PR_ANALYZER_STATE_FILE:./pr-analyzer-state.json}
-  # 자율 탐색 에이전트 루프 예산(균형), 0 이하면 분석 실패(폴백 없음)
   max-tool-iterations: ${PR_ANALYZER_MAX_TOOL_ITERATIONS:8}
   max-files: ${PR_ANALYZER_MAX_FILES:6}
   max-file-chars: ${PR_ANALYZER_MAX_FILE_CHARS:25000}
+  max-dir-entries: ${PR_ANALYZER_MAX_DIR_ENTRIES:100}
 
-# PR 생성(opened) 시 언어→프레임워크/인프라→도메인/보안→최종검증 4단계 자동 리뷰
 pr-review:
   enabled: ${PR_REVIEW_ENABLED:true}
   state-file: ${PR_REVIEW_STATE_FILE:./pr-analyzer-review-state.json}
@@ -52,5 +51,4 @@ pr-review:
 
 logging:
   level:
-    # 테스트/디버깅용 DEBUG. 확인이 끝나면 환경변수로 INFO 지정하거나 기본값을 INFO로 되돌릴 것
     com.pr.automation: ${LOGGING_LEVEL_COM_PR_AUTOMATION:DEBUG}

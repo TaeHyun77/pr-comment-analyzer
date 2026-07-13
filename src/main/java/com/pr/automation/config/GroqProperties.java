@@ -16,4 +16,6 @@ public class GroqProperties {
     private final String model;
     private final int maxTokens;
     private final double temperature;
+    private final int readTimeoutMs; // LLM API 응답 대기 시간(ms). 모델 교체 시 지연 편차 대응용
+    private final int maxAttempts;   // 일시적 오류(429/5xx/네트워크) 재시도 횟수
 }

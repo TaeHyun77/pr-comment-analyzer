@@ -14,9 +14,8 @@ import java.time.Duration;
 @Configuration
 @RequiredArgsConstructor
 public class RestTemplateConfig {
-    // 외부 API 무한 대기 방지용 타임아웃. 환경별 튜닝이 필요해지면 *Properties로 승격
+    // 외부 API 무한 대기 방지용 타임아웃. LLM read 타임아웃은 모델별 지연 편차가 커 env(LLM_READ_TIMEOUT_MS)로 분리
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
-    private static final Duration GROQ_READ_TIMEOUT = Duration.ofSeconds(60);
     private static final Duration DEFAULT_READ_TIMEOUT = Duration.ofSeconds(10);
 
     private final GroqProperties groqProperties;
@@ -26,7 +25,7 @@ public class RestTemplateConfig {
     public RestTemplate groqRestTemplate(RestTemplateBuilder builder) {
         RestTemplate rt = builder
                 .setConnectTimeout(CONNECT_TIMEOUT)
-                .setReadTimeout(GROQ_READ_TIMEOUT)
+                .setReadTimeout(Duration.ofMillis(groqProperties.getReadTimeoutMs()))
                 .build();
         rt.setUriTemplateHandler(new DefaultUriBuilderFactory(groqProperties.getBaseUrl()));
         rt.getInterceptors().add((request, body, execution) -> {
