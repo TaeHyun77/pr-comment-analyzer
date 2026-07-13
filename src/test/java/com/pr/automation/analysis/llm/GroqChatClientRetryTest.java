@@ -50,7 +50,7 @@ class GroqChatClientRetryTest {
     void setUp() {
         restTemplate = mock(RestTemplate.class);
         sleepCount = new AtomicInteger();
-        GroqProperties props = new GroqProperties("key", "http://localhost", "model", 2048, 0.3);
+        GroqProperties props = new GroqProperties("key", "http://localhost", "model", 2048, 0.3, 60000, 3);
         client = new TestGroqChatClient(restTemplate, props, sleepCount);
     }
 

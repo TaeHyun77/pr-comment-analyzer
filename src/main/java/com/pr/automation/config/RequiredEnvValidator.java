@@ -35,7 +35,7 @@ public class RequiredEnvValidator implements ApplicationRunner {
             missing.add("GITHUB_WEBHOOK_SECRET");
         }
         if (!StringUtils.hasText(groqProperties.getApiKey())) {
-            missing.add("GROQ_API_KEY");
+            missing.add("LLM_API_KEY");
         }
         if (slackProperties.isEnabled()
                 && !StringUtils.hasText(slackProperties.getWebhookUrl())) {

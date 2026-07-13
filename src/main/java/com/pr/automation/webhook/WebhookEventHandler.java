@@ -62,6 +62,15 @@ public class WebhookEventHandler {
         }
 
         CommentEvent ce = extracted.get();
+
+        // 코멘트 분석 전역 kill-switch — 비활성이면 트리거하지 않고 ack (복구 대상에서 제외)
+        if (!prAnalyzerProperties.isEnabled()) {
+            log.info("코멘트 분석 비활성화(PR_ANALYZER_ENABLED=false), 건너뜀: {} #{} comment={} (delivery={})",
+                    ce.getRepoFullName(), ce.getPrNumber(), ce.getCommentId(), deliveryId);
+            deliveryStore.markReceived(deliveryId);
+            return;
+        }
+
         if (log.isDebugEnabled()) {
             try {
                 log.debug("수신 CommentEvent={}", objectMapper.writeValueAsString(ce));

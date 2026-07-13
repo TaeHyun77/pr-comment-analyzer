@@ -160,8 +160,9 @@ public class CommentAnalysisAgent {
                 case AgentToolSpecs.TOOL_LIST_DIR:
                     String dirPath = argPath(args);
                     String targetDir = dirPath == null ? "" : dirPath;
+                    int maxDirEntries = prAnalyzerProperties.getMaxDirEntries();
                     toolResultString = reader.listDirectory(targetDir)
-                            .map(list -> list.isEmpty() ? "(빈 디렉터리)" : String.join("\n", list))
+                            .map(list -> list.isEmpty() ? "(빈 디렉터리)" : joinLimited(list, maxDirEntries))
                             .orElse("오류: 디렉터리를 찾을 수 없음 (" + targetDir + ")");
                     break;
 
@@ -217,6 +218,15 @@ public class CommentAnalysisAgent {
         } catch (JsonProcessingException e) {
             return null;
         }
+    }
+
+    // 디렉터리 엔트리를 최대 max개까지만 노출해 컨텍스트 폭증을 방지 (max<=0이면 무제한)
+    private static String joinLimited(List<String> entries, int max) {
+        if (max > 0 && entries.size() > max) {
+            String head = String.join("\n", entries.subList(0, max));
+            return head + "\n…(총 " + entries.size() + "개 중 " + max + "개만 표시)";
+        }
+        return String.join("\n", entries);
     }
 
     private static String truncate(String s, int max) {

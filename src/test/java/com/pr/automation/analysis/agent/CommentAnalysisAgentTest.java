@@ -28,7 +28,7 @@ import static org.mockito.Mockito.when;
 class CommentAnalysisAgentTest {
 
     private static final PrAnalyzerProperties BUDGET =
-            new PrAnalyzerProperties(true, "./state.json", 4, 6, 25000);
+            new PrAnalyzerProperties(true, "./state.json", 4, 6, 25000, true, 100);
 
     private static CommentContext context() {
         return CommentContext.builder()
@@ -86,7 +86,7 @@ class CommentAnalysisAgentTest {
     @Test
     void maxToolIterations가_0이하면_예외() {
         PrAnalyzerProperties zero =
-                new PrAnalyzerProperties(true, "./s.json", 0, 6, 25000);
+                new PrAnalyzerProperties(true, "./s.json", 0, 6, 25000, true, 100);
         CommentAnalysisAgent agent = newAgent(mock(GroqChatClient.class), zero);
 
         assertThatThrownBy(() -> agent.run(context(), new RecordingReader(Optional.of("x"))))
@@ -135,7 +135,7 @@ class CommentAnalysisAgentTest {
     @Test
     void 시나리오B_예산_내_submit_미호출시_파싱_예외() {
         PrAnalyzerProperties oneRound =
-                new PrAnalyzerProperties(true, "./s.json", 1, 6, 25000);
+                new PrAnalyzerProperties(true, "./s.json", 1, 6, 25000, true, 100);
         GroqChatClient chat = mock(GroqChatClient.class);
         when(chat.send(any(), any(), any()))
                 .thenReturn(assistantWithCall("read_file", "{\"path\":\"a\"}"));

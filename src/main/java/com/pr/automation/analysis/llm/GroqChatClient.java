@@ -30,7 +30,6 @@ import java.util.concurrent.ThreadLocalRandom;
 @Component
 @RequiredArgsConstructor
 public class GroqChatClient {
-    private static final int MAX_ATTEMPTS = 3;
     private static final long INITIAL_BACKOFF_MS = 1000L;
     private static final int BODY_LOG_LIMIT = 500;
 
@@ -50,8 +49,9 @@ public class GroqChatClient {
 
         int attempt = 0;
         long backoffMillis = INITIAL_BACKOFF_MS;
+        int maxAttempts = groqProperties.getMaxAttempts();
 
-        while (attempt < MAX_ATTEMPTS) {
+        while (attempt < maxAttempts) {
             try {
                 ChatResponse response = groqRestTemplate.postForObject("/chat/completions", request, ChatResponse.class);
                 return validateAndGetMessage(response);
@@ -87,10 +87,11 @@ public class GroqChatClient {
 
     // 재시도 한계 확인 + 로깅 + sleep + 백오프 계산을 통합
     private long handleRetry(int attempt, long currentBackoff, String causeMsg, Exception e) {
-        if (attempt >= MAX_ATTEMPTS) {
+        int maxAttempts = groqProperties.getMaxAttempts();
+        if (attempt >= maxAttempts) {
             throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.AI_API_ERROR, "Groq API 재시도 횟수 초과: " + causeMsg, e);
         }
-        log.warn("Groq {}, 최대 {}ms 내외 대기 후 재시도 ({}/{})", causeMsg, currentBackoff, attempt, MAX_ATTEMPTS);
+        log.warn("Groq {}, 최대 {}ms 내외 대기 후 재시도 ({}/{})", causeMsg, currentBackoff, attempt, maxAttempts);
         sleepWithFullJitter(currentBackoff);
         return currentBackoff * 2;
     }
