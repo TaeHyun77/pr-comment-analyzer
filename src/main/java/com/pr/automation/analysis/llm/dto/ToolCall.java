@@ -5,6 +5,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
+// LLM 응답에 포함된 도구 호출 하나를 담는 DTO
 @Getter
 @Setter
 @NoArgsConstructor

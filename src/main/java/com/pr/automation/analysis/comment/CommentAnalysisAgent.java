@@ -29,7 +29,7 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-// 코멘트 분석을 위한 에이전트 루프
+// 코멘트 분석을 위한 에이전트 루프 - 실질적인 루프 코드
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -175,6 +175,7 @@ public class CommentAnalysisAgent {
         return submittedResult;
     }
 
+    // submit_analysis 도구 호출의 JSON 인자를 AnalysisResult 객체로 역직렬
     private AnalysisResult parseSubmit(String arguments) {
         try {
             return objectMapper.readValue(StringUtils.hasText(arguments) ? arguments : "{}", AnalysisResult.class);
@@ -184,7 +185,7 @@ public class CommentAnalysisAgent {
         }
     }
 
-    // submit 도구를 쓰지 않고 자유 텍스트로 응답한 경우의 회복 경로
+    // 도구를 쓰지 않고 자유 텍스트로 답한 경우, 텍스트에서 JSON을 추출하여 AnalysisResult로 파싱
     AnalysisResult parseFallback(String content) {
         if (!StringUtils.hasText(content)) {
             throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.AI_RESPONSE_PARSE_ERROR, "빈 텍스트 응답");
@@ -198,7 +199,7 @@ public class CommentAnalysisAgent {
         }
     }
 
-    // 디버그용 : 최종 분석 결과 전체 내용을 로그로 남깁니다.
+    // 디버그용 : 디버그 로그가 켜져 있을 때 최종 분석 결과를 JSON으로 로깅합니다.
     private void logResult(String path, AnalysisResult result) {
         if (!log.isDebugEnabled()) {
             return;
@@ -210,6 +211,7 @@ public class CommentAnalysisAgent {
         }
     }
 
+    // 도구 호출 인자 JSON에서 path 필드 값을 안전하게 꺼냅니다.
     private String argPath(String arguments) {
         if (!StringUtils.hasText(arguments)) return null;
         try {
@@ -220,7 +222,7 @@ public class CommentAnalysisAgent {
         }
     }
 
-    // 디렉터리 엔트리를 최대 max개까지만 노출해 컨텍스트 폭증을 방지 (max<=0이면 무제한)
+    // 디렉터리 목록이 너무 길면 앞부분만 보여주고 "총 N개 중 M개만 표시"라고 덧붙입니다.
     private static String joinLimited(List<String> entries, int max) {
         if (max > 0 && entries.size() > max) {
             String head = String.join("\n", entries.subList(0, max));
@@ -229,6 +231,7 @@ public class CommentAnalysisAgent {
         return String.join("\n", entries);
     }
 
+    // 각각 파일 내용/로그용 문자열의 길이를 제한하는 유틸입니다.
     private static String truncate(String s, int max) {
         if (s == null) return "";
         if (s.length() <= max) return s;
@@ -240,7 +243,7 @@ public class CommentAnalysisAgent {
         return s.length() <= max ? s : s.substring(0, max - 1) + "…";
     }
 
-    // 자유 텍스트 응답에서 JSON 본문을 떼어낸다(코드펜스/앞뒤 텍스트 허용).
+    // 앞뒤 잡텍스트가 섞인 응답에서 순수 JSON 본문만 잘라냅니다.
     static String extractJson(String content) {
         String trimmed = content.trim();
         Matcher m = CODE_FENCE.matcher(trimmed);
@@ -255,6 +258,7 @@ public class CommentAnalysisAgent {
         return trimmed;
     }
 
+    // 클래스패스 리소스(prompts/agentic-system.md)에서 시스템 프롬프트 텍스트를 정적으로 읽어옵니다 (클래스 로딩 시 1회)
     private static String loadPrompt(String resourcePath) {
         try (InputStream in = CommentAnalysisAgent.class.getClassLoader().getResourceAsStream(resourcePath)) {
             if (in == null) throw new IllegalStateException("프롬프트 리소스 없음: " + resourcePath);

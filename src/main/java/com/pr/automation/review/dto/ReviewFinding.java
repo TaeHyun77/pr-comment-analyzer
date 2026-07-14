@@ -6,7 +6,7 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
-// 한 단계가 발견한 개별 이슈 (LLM이 submit_findings/submit_review로 채움)
+// 한 단계(혹은 최종 종합)가 발견한 개별 이슈 하나를 표현하는 DTO
 @Getter
 @Builder
 @NoArgsConstructor

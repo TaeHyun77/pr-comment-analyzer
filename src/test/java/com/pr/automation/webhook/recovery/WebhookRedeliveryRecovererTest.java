@@ -30,7 +30,7 @@ class WebhookRedeliveryRecovererTest {
 
     private GithubProperties propsWith(java.util.List<String> repos, boolean enabled, boolean schedulerEnabled) {
         return new GithubProperties("token", "me", "secret", repos,
-                new GithubProperties.WebhookRecovery(enabled, 24, "./d.json",
+                new GithubProperties.WebhookRecovery(enabled, 24, 
                         schedulerEnabled, 1800000L, 1));
     }
 
@@ -116,6 +116,47 @@ class WebhookRedeliveryRecovererTest {
         verify(client, times(1)).redeliver(eq("me/repo"), eq(55L), eq(2L));
         verify(client, never()).redeliver(eq("me/repo"), eq(55L), eq(1L));
         verify(client, never()).redeliver(eq("me/repo"), eq(55L), eq(3L));
+    }
+
+    @Test
+    void 재전송_상한을_초과한_delivery는_redeliver하지_않는다() {
+        GithubDeliveryClient client = mock(GithubDeliveryClient.class);
+        DeliveryStore store = mock(DeliveryStore.class);
+        when(client.isEnabled()).thenReturn(true);
+        when(client.findHookId("me/repo")).thenReturn(Optional.of(55L));
+
+        GhDelivery poison = delivery(9L, "g-poison", Instant.now().minus(1, ChronoUnit.HOURS));
+        when(client.listDeliveries("me/repo", 55L)).thenReturn(Optional.of(Arrays.asList(poison)));
+        when(store.isReceived("g-poison")).thenReturn(false);
+        when(store.getRedeliverCount("g-poison")).thenReturn(5); // 상한 도달
+
+        WebhookRedeliveryRecoverer r = new WebhookRedeliveryRecoverer(
+                propsWith(Arrays.asList("me/repo"), true), client, store);
+
+        WebhookRedeliveryRecoverer.RecoverySummary s = r.recoverNow(24);
+        assertThat(s.getTotalTriggered()).isZero();
+        assertThat(s.getTotalSkipped()).isEqualTo(1);
+        verify(client, never()).redeliver(any(), anyLong(), anyLong());
+    }
+
+    @Test
+    void redeliver_성공_시_재전송_횟수를_기록한다() {
+        GithubDeliveryClient client = mock(GithubDeliveryClient.class);
+        DeliveryStore store = mock(DeliveryStore.class);
+        when(client.isEnabled()).thenReturn(true);
+        when(client.findHookId("me/repo")).thenReturn(Optional.of(55L));
+
+        GhDelivery d = delivery(7L, "g-r", Instant.now().minus(1, ChronoUnit.HOURS));
+        when(client.listDeliveries("me/repo", 55L)).thenReturn(Optional.of(Arrays.asList(d)));
+        when(store.isReceived("g-r")).thenReturn(false);
+        when(store.getRedeliverCount("g-r")).thenReturn(0);
+        when(client.redeliver("me/repo", 55L, 7L)).thenReturn(true);
+
+        WebhookRedeliveryRecoverer r = new WebhookRedeliveryRecoverer(
+                propsWith(Arrays.asList("me/repo"), true), client, store);
+
+        r.recoverNow(24);
+        verify(store).recordRedeliverAttempt("g-r");
     }
 
     @Test

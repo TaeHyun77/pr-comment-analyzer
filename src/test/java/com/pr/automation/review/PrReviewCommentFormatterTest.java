@@ -28,7 +28,7 @@ class PrReviewCommentFormatterTest {
 
         String md = formatter.format(result);
 
-        assertThat(md).contains("## 🤖 자동 PR 리뷰 (4단계)");
+        assertThat(md).contains("## 자동 PR 리뷰 (4단계)");
         assertThat(md).contains("확정 이슈 (2건)");
         assertThat(md).contains("본질적 판단 포인트");
         assertThat(md).contains("단계별 총평");

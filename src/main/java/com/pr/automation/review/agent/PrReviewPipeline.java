@@ -27,9 +27,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * PR 생성 시 4단계 순차 리뷰를 진행합니다.
- * 단계마다 정확히 1회 LLM을 호출하며, 이전 단계 발견을 다음 단계로 넘깁니다.
- * 1~3단계는 submit_findings, 최종검증 단계는 submit_review를 강제 호출해 구조화 결과를 받습니다.
+ * 4단계 리뷰를 순차적으로 실행하는 핵심 클래스
+ *  각 단계마다 정확히 1회 LLM을 호출하며, 이전 단계의 발견을 다음 단계로 넘겨줍니다. 1~3단계는 submit_findings, 4단계(최종검증)는 submit_review 도구 호출을 강제해 구조화된 결과만 받습니다.
  */
 @Slf4j
 @Component
@@ -51,6 +50,7 @@ public class PrReviewPipeline {
     private final PrReviewToolSpecs toolSpecs;
     private final ObjectMapper objectMapper;
 
+    //  언어 → 프레임워크/인프라 → 도메인/보안 순으로 runStage()를 3번 호출해 각 단계 결과를 누적하고, 마지막에 runFinal()로 종합 결과를 만들어 반환
     public PrReviewResult run(PrReviewEvent event, List<ChangedFile> files) {
         List<StageReviewResult> stageResults = new ArrayList<>();
 
@@ -61,7 +61,8 @@ public class PrReviewPipeline {
         return runFinal(event, stageResults);
     }
 
-    // 1~3단계 공통 실행 — 이전 단계 결과( priorResults )는 호출 시점까지 채워진 누적 목록
+    // 1~3단계 공통 실행 로직. 시스템 프롬프트 + promptBuilder.buildStagePrompt()로 만든 사용자 프롬프트를 LLM에 보내고
+    // , submit_findings 도구 호출을 강제해 응답을 StageReviewResult로 파싱한 뒤 단계 이름을 채워 반환
     private StageReviewResult runStage(String stageName, String systemPrompt, PrReviewEvent event,
                                        List<ChangedFile> files, List<StageReviewResult> priorResults) {
         List<ChatMessage> messages = new ArrayList<>();
@@ -77,6 +78,7 @@ public class PrReviewPipeline {
         return result;
     }
 
+    // 4단계(최종검증) 실행
     private PrReviewResult runFinal(PrReviewEvent event, List<StageReviewResult> stageResults) {
         List<ChatMessage> messages = new ArrayList<>();
         messages.add(ChatMessage.system(SYSTEM_FINAL));
@@ -91,6 +93,7 @@ public class PrReviewPipeline {
         return result;
     }
 
+    // 각 단계의 이름과 총평을 "단계명: 총평" 형식 문자열 리스트로 만듦
     private List<String> buildStageSummaries(List<StageReviewResult> stageResults) {
         List<String> summaries = new ArrayList<>();
         for (StageReviewResult r : stageResults) {
@@ -99,6 +102,7 @@ public class PrReviewPipeline {
         return summaries;
     }
 
+    // LLM 응답에서 JSON을 추출해 지정된 타입으로 역직렬화
     private <T> T parse(ChatMessage response, Class<T> type) {
         String json = extractArguments(response);
         try {

@@ -22,7 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-// 분석 결과를 Slack Incoming Webhook으로 보냄, slack.enabled=false면 전송 없이 로그만 남김
+// 분석 결과를 Slack Incoming Webhook으로 보냅니다. slack.enabled=false면 전송 없이 로그만 남김
 @Slf4j
 @Component
 @RequiredArgsConstructor

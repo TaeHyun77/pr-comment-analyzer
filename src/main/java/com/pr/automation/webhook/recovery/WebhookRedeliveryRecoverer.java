@@ -27,6 +27,8 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class WebhookRedeliveryRecoverer {
     private static final int DEFAULT_LOOKBACK_HOURS = 24;
+    // 같은 delivery의 재전송 트리거 상한 — 초과하면 포이즌 delivery로 간주하고 복구를 포기 (RECEIVED로 위장하지 않아 coverage에는 누락으로 남음)
+    private static final int MAX_REDELIVER_ATTEMPTS = 5;
 
     private final GithubProperties githubProperties;
     private final GithubDeliveryClient deliveryClient;
@@ -121,7 +123,14 @@ public class WebhookRedeliveryRecoverer {
                     skipped++;
                     continue;
                 }
+                if (deliveryStore.getRedeliverCount(d.getGuid()) >= MAX_REDELIVER_ATTEMPTS) {
+                    log.warn("재전송 상한({}회) 초과, 복구 포기 (포이즌 delivery): repo={} guid={}",
+                            MAX_REDELIVER_ATTEMPTS, repo, d.getGuid());
+                    skipped++;
+                    continue;
+                }
                 if (d.getId() != null && deliveryClient.redeliver(repo, hookId, d.getId())) {
+                    deliveryStore.recordRedeliverAttempt(d.getGuid());
                     triggered++;
                 }
             }

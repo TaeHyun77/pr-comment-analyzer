@@ -7,7 +7,7 @@ import lombok.Getter;
 
 import java.util.List;
 
-// LLM에게 보내는 요청
+// API에 보내는 요청 바디
 @Getter
 @AllArgsConstructor
 @JsonInclude(JsonInclude.Include.NON_NULL)

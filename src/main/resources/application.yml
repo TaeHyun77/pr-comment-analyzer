@@ -3,6 +3,19 @@ spring:
     name: automation
   jackson:
     default-property-inclusion: non_null
+  datasource:
+    # 기본값은 docker compose mysql의 호스트 노출 포트(13306) — 로컬 bootRun 시 compose mysql만 띄우면 됨
+    url: ${DB_URL:jdbc:mysql://localhost:13306/automation?serverTimezone=UTC&characterEncoding=UTF-8}
+    username: ${DB_USERNAME:automation}
+    password: ${DB_PASSWORD:automation}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
 
 server:
   port: ${SERVER_PORT:8080}
@@ -15,7 +28,6 @@ github:
   webhook-recovery:
     enabled: ${GITHUB_WEBHOOK_RECOVERY_ENABLED:true}
     lookback-hours: ${GITHUB_WEBHOOK_RECOVERY_LOOKBACK_HOURS:24}
-    state-file: ${GITHUB_WEBHOOK_RECOVERY_STATE_FILE:./pr-analyzer-deliveries.json}
     scheduler-enabled: ${GITHUB_WEBHOOK_RECOVERY_SCHEDULER_ENABLED:true}
     scheduler-interval-ms: ${GITHUB_WEBHOOK_RECOVERY_SCHEDULER_INTERVAL_MS:1800000}
     scheduler-lookback-hours: ${GITHUB_WEBHOOK_RECOVERY_SCHEDULER_LOOKBACK_HOURS:1}
@@ -36,7 +48,6 @@ slack:
 pr-analyzer:
   enabled: ${PR_ANALYZER_ENABLED:true}
   include-own-comments: ${PR_ANALYZER_INCLUDE_OWN_COMMENTS:true}
-  state-file: ${PR_ANALYZER_STATE_FILE:./pr-analyzer-state.json}
   max-tool-iterations: ${PR_ANALYZER_MAX_TOOL_ITERATIONS:8}
   max-files: ${PR_ANALYZER_MAX_FILES:6}
   max-file-chars: ${PR_ANALYZER_MAX_FILE_CHARS:25000}
@@ -44,7 +55,6 @@ pr-analyzer:
 
 pr-review:
   enabled: ${PR_REVIEW_ENABLED:true}
-  state-file: ${PR_REVIEW_STATE_FILE:./pr-analyzer-review-state.json}
   max-files: ${PR_REVIEW_MAX_FILES:50}
   max-patch-chars: ${PR_REVIEW_MAX_PATCH_CHARS:6000}
   post-to-slack: ${PR_REVIEW_POST_TO_SLACK:false}

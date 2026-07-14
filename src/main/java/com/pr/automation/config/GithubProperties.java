@@ -30,7 +30,6 @@ public class GithubProperties {
     public static class WebhookRecovery {
         private final boolean enabled;
         private final int lookbackHours;
-        private final String stateFile;
         // 운영 중 사각지대 자동 회복용 스케줄러 설정
         private final boolean schedulerEnabled;
         private final long schedulerIntervalMs;

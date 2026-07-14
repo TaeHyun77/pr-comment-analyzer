@@ -39,11 +39,11 @@ class WebhookEventHandlerTest {
         handler = new WebhookEventHandler(
                 objectMapper,
                 new GithubProperties("token", "myname", "secret", null, null),
-                new PrAnalyzerProperties(true, "./state.json", 8, 6, 25000, true, 100),
+                new PrAnalyzerProperties(true, 8, 6, 25000, true, 100),
                 analysisService,
                 deliveryStore,
                 prReviewService,
-                new PrReviewProperties(true, "./review-state.json", 50, 6000, false));
+                new PrReviewProperties(true, 50, 6000, false));
     }
 
     private byte[] bytes(String s) {
@@ -171,11 +171,11 @@ class WebhookEventHandlerTest {
         WebhookEventHandler h = new WebhookEventHandler(
                 objectMapper,
                 new GithubProperties("token", "myname", "secret", null, null),
-                new PrAnalyzerProperties(false, "./state.json", 8, 6, 25000, true, 100),
+                new PrAnalyzerProperties(false, 8, 6, 25000, true, 100),
                 analysisService,
                 deliveryStore,
                 prReviewService,
-                new PrReviewProperties(true, "./review-state.json", 50, 6000, false));
+                new PrReviewProperties(true, 50, 6000, false));
         assertThat(h.extract("pull_request_review_comment", "d-3",
                 bytes(reviewCommentPayload("myname", "myname", "User", "created")))).isEmpty();
     }
@@ -295,11 +295,11 @@ class WebhookEventHandlerTest {
         WebhookEventHandler disabled = new WebhookEventHandler(
                 objectMapper,
                 new GithubProperties("token", "myname", "secret", null, null),
-                new PrAnalyzerProperties(true, "./state.json", 8, 6, 25000, true, 100),
+                new PrAnalyzerProperties(true, 8, 6, 25000, true, 100),
                 analysisService,
                 deliveryStore,
                 prReviewService,
-                new PrReviewProperties(false, "./review-state.json", 50, 6000, false));
+                new PrReviewProperties(false, 50, 6000, false));
         assertThat(disabled.extractPullRequest("d", bytes(pullRequestPayload("myname", "User", "opened")))).isEmpty();
     }
 

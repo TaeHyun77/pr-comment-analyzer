@@ -11,10 +11,32 @@ services:
     env_file:
       - .env
     environment:
-      PR_ANALYZER_STATE_FILE: /app/data/pr-analyzer-state.json
-      GITHUB_WEBHOOK_RECOVERY_STATE_FILE: /app/data/pr-analyzer-deliveries.json
+      DB_URL: jdbc:mysql://mysql:3306/automation?serverTimezone=UTC&characterEncoding=UTF-8
+      DB_USERNAME: automation
+      DB_PASSWORD: ${DB_PASSWORD:-automation}
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  mysql:
+    image: mysql:8.0
+    container_name: pr-automation-mysql
+    restart: unless-stopped
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    ports:
+      - "13306:3306"  # 호스트 로컬 MySQL(3306)과의 충돌을 피해 13306으로 노출 (로컬 bootRun용)
+    environment:
+      MYSQL_DATABASE: automation
+      MYSQL_USER: automation
+      MYSQL_PASSWORD: ${DB_PASSWORD:-automation}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-automation-root}
     volumes:
-      - ./data:/app/data
+      - ./data/mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uautomation", "-p${DB_PASSWORD:-automation}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   ngrok:
     image: ngrok/ngrok:latest

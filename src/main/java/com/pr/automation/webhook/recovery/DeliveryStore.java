@@ -1,96 +1,54 @@
 package com.pr.automation.webhook.recovery;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.pr.automation.config.GithubProperties;
-import lombok.AllArgsConstructor;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
-import javax.annotation.PostConstruct;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.LinkedHashSet;
-import java.util.List;
-
-/** 웹훅 복구
- * 받은 delivery가 아니라, 책임을 다 진 delivery의 guid 집합을 영속함
- * 책임을 다 진 경우: ping 수신, 필터링 탈락(봇/타 사용자 PR 등), 분석 성공.
- * 분석 중 크래시는 영속화 하지 않으므로 다음 부팅 시 recoverer가 복구 대상으로 식별됨
+/**
+ * ping 수신, 필터 탈락(봇/타인 PR 등), 분석/리뷰 성공 중 하나를 마친 delivery의 guid를 RECEIVED로 기록하는 ledger
+ * 분석 도중 크래시난 경우는 RECEIVED 기록이 없어 다음 복구 사이클의 대상이 됩니다.
+ * 재전송을 트리거한 횟수(redeliverCount)도 함께 기록해 포이즌 delivery의 무한 재시도를 차단합니다.
  */
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class DeliveryStore {
-    private static final int MAX_GUIDS = 5_000;
-    private static final String DEFAULT_STATE_FILE = "./pr-analyzer-deliveries.json";
 
-    private final Path stateFile; // delivery를 저장할 파일
-    private final ObjectMapper objectMapper;
-    private final LinkedHashSet<String> received = new LinkedHashSet<>();
+    private final WebhookDeliveryRepository repository;
 
-    public DeliveryStore(GithubProperties properties, ObjectMapper objectMapper) {
-        String path = properties.getWebhookRecovery() != null && StringUtils.hasText(properties.getWebhookRecovery().getStateFile())
-                ? properties.getWebhookRecovery().getStateFile()
-                : DEFAULT_STATE_FILE;
-        this.stateFile = Paths.get(path);
-        this.objectMapper = objectMapper;
-    }
-
-    @PostConstruct
-    synchronized void load() {
-        if (!Files.exists(stateFile)) {
-            log.info("delivery 상태 파일 없음, 빈 상태로 시작: {}", stateFile.toAbsolutePath());
-            return;
-        }
-        try {
-            State state = objectMapper.readValue(stateFile.toFile(), State.class);
-            if (state != null && state.getReceivedDeliveryGuids() != null) {
-                received.addAll(state.getReceivedDeliveryGuids());
-            }
-            log.info("delivery 상태 파일 로드 완료: {}건 ({})", received.size(), stateFile.toAbsolutePath());
-        } catch (Exception e) {
-            log.warn("delivery 상태 파일 로드 실패, 빈 상태로 시작: {}", stateFile, e);
-        }
-    }
-
-    public synchronized void markReceived(String deliveryGuid) {
+    // delivery의 책임 완료를 기록 — RETRYING 이력이 있으면 RECEIVED로 승격
+    public void markReceived(String deliveryGuid) {
         if (!StringUtils.hasText(deliveryGuid)) return;
-        if (received.add(deliveryGuid)) {
-            while (received.size() > MAX_GUIDS) {
-                Iterator<String> it = received.iterator();
-                it.next();
-                it.remove();
-            }
-            save();
-        }
-    }
-
-    public synchronized boolean isReceived(String deliveryGuid) {
-        return deliveryGuid != null && received.contains(deliveryGuid);
-    }
-
-    synchronized void save() {
         try {
-            Path tmp = stateFile.resolveSibling(stateFile.getFileName() + ".tmp");
-            objectMapper.writeValue(tmp.toFile(), new State(new ArrayList<>(received)));
-            Files.move(tmp, stateFile, StandardCopyOption.REPLACE_EXISTING);
-        } catch (Exception e) {
-            log.warn("delivery 상태 파일 저장 실패: {}", stateFile, e);
+            repository.saveAndFlush(WebhookDelivery.received(deliveryGuid));
+        } catch (DataIntegrityViolationException e) {
+            repository.promoteToReceived(deliveryGuid);
         }
     }
 
-    @Getter
-    @Setter
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class State {
-        private List<String> receivedDeliveryGuids;
+    // 해당 guid의 책임이 완료됐는지 조회 (RETRYING 이력만 있는 guid는 false — 여전히 복구 대상)
+    public boolean isReceived(String deliveryGuid) {
+        return StringUtils.hasText(deliveryGuid)
+                && repository.existsByGuidAndStatus(deliveryGuid, DeliveryStatus.RECEIVED);
+    }
+
+    // 지금까지 재전송을 트리거한 횟수 (기록 없으면 0)
+    public int getRedeliverCount(String deliveryGuid) {
+        if (!StringUtils.hasText(deliveryGuid)) return 0;
+        return repository.findById(deliveryGuid)
+                .map(WebhookDelivery::getRedeliverCount)
+                .orElse(0);
+    }
+
+    // 재전송 트리거를 기록 — 첫 기록이면 RETRYING 행 생성, 이후는 횟수만 증가
+    public void recordRedeliverAttempt(String deliveryGuid) {
+        if (!StringUtils.hasText(deliveryGuid)) return;
+        try {
+            repository.saveAndFlush(WebhookDelivery.retrying(deliveryGuid));
+        } catch (DataIntegrityViolationException e) {
+            repository.incrementRedeliverCount(deliveryGuid);
+        }
     }
 }

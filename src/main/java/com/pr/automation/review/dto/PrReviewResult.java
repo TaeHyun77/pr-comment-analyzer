@@ -10,8 +10,7 @@ import lombok.Setter;
 
 import java.util.List;
 
-// 최종검증 단계가 1~3단계를 종합한 결과 (PR 코멘트로 게시됨)
-// overallSummary/mergedFindings/reviewerFocusNotes는 LLM이 채우고, stageSummaries는 파이프라인이 주입
+// 4단계(최종검증)가 1~3단계를 종합한 최종 결과로, PR 코멘트로 게시될 데이터
 @Getter
 @Setter
 @Builder

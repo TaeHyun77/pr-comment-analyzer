@@ -8,6 +8,7 @@ import lombok.Setter;
 
 import java.util.Map;
 
+// GitHub 웹훅이 보내는 JSON 페이로드 원본을 매핑하는 DTO
 @Getter
 @Setter
 @NoArgsConstructor

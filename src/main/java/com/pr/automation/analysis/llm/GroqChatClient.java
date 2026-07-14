@@ -20,23 +20,23 @@ import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * 에이전트가 루프/프롬프트/도구 스키마는 알지 못함
- * 호출자가 messages/tools/tool_choice를 모두 결정해서 전달
+ * Groq API와 통신하는 순수 전송 계층
+ * 프롬프트 구성, 대화 루프 진행, 도구 스키마 결정 등은 이 클래스의 책임이 아니며, 단지 보내는 역할만 담당합니다.
  *
- * 일시적 실패(429, 5xx, 네트워크 순단)는 MAX_ATTEMPTS 회 재시도 하도록 함
- * → 4xx(429 제외)는 응답 body 로깅 후 즉시 실패, 그 외 RestClientException은 catch-all로 봉쇄
+ * 재시도 담당
+ * 일시적 실패 (429, 5xx, 네트워크 순단)는 MAX_ATTEMPTS 회 재시도 하도록 함 , 4xx(429 제외)는 응답 body 로깅 후 즉시 실패
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class GroqChatClient {
-    private static final long INITIAL_BACKOFF_MS = 1000L;
-    private static final int BODY_LOG_LIMIT = 500;
+    private static final long INITIAL_BACKOFF_MS = 1000L; // 재시도 백오프의 시작값
+    private static final int BODY_LOG_LIMIT = 500; // 에러 로그에 남길 응답 바디의 최대 길이
 
     private final RestTemplate groqRestTemplate;
     private final GroqProperties groqProperties;
 
-    // 한 라운드의 응답 메시지를 반환. 응답 형태가 비정상이면 예외
+    // 메인이 되는 진입점
     public ChatMessage send(List<ChatMessage> messages, List<Tool> tools, Object toolChoice) {
         ChatRequest request = new ChatRequest(
                 groqProperties.getModel(),
@@ -85,7 +85,8 @@ public class GroqChatClient {
         throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.AI_API_ERROR, "알 수 없는 오류로 Groq 호출 실패 (루프 이탈)");
     }
 
-    // 재시도 한계 확인 + 로깅 + sleep + 백오프 계산을 통합
+    // 재시도 관련 로직을 한 곳에 모든 헬터 메서드
+    // 지수 백오프( 매 실패마다 대기 시간 2배 )를 구현하며, 반환값을 send()의 backoffMillis 변수에 재대입하는 방식으로 상태를 이어갑니다.
     private long handleRetry(int attempt, long currentBackoff, String causeMsg, Exception e) {
         int maxAttempts = groqProperties.getMaxAttempts();
         if (attempt >= maxAttempts) {
@@ -115,7 +116,7 @@ public class GroqChatClient {
         return response.getChoices().get(0).getMessage();
     }
 
-    // 로그용 문자열 축약
+    // 4xx 에러 로깅 시 응답 바디를 500자로 잘라 로그 가독성을 지키는 유틸
     private static String abbreviate(String s, int max) {
         if (s == null || s.isEmpty()) return "(빈 응답)";
         return s.length() <= max ? s : s.substring(0, max) + "…";

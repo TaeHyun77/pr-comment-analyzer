@@ -7,7 +7,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
-// 에이전트 루프에 사용하는 초기 프롬프트 생성 ( review_comment 이거나 아닌 경우 )
+// 에이전트에게 줄 프롬프트 정의
 @Component
 @RequiredArgsConstructor
 public class AgentPromptBuilder {
@@ -18,7 +18,7 @@ public class AgentPromptBuilder {
 
     private final PrAnalyzerProperties prAnalyzerProperties;
 
-    // 코멘트가 달린 파일을 읽어 본문에 끼워 넣음 ( review_comment + filePath 있을 때만 )
+    // review_comment이고 filePath가 존재할 때 코멘트가 달린 파일 전체 내용을 본문에 끼워 넣음
     public String buildInitial(
             CommentContext context,
             RepoFileReader reader
@@ -34,6 +34,7 @@ public class AgentPromptBuilder {
     }
 
     // LLM에게 전달할 프롬프트 작성
+    // 파일 내용만으로 분석이 가능하다면 분석하고, 아니라면 도구를 사용하여 분석
     private String agenticUserPrompt(CommentContext c, String primaryFileContent) {
         StringBuilder sb = new StringBuilder(userPrompt(c)); // PR에 대한 기본적인 정보 프롬프트
 
@@ -51,7 +52,7 @@ public class AgentPromptBuilder {
         return sb.toString();
     }
 
-    // PR 정보, 코멘트 위치, diff, 부모 스레드, 코멘트 본문 등등
+    // PR 정보, 코멘트 위치, diff, 부모 스레드, 코멘트 본문 등등의 내용을 agenticUserPrompt에 전달
     private String userPrompt(CommentContext c) {
         StringBuilder sb = new StringBuilder();
 
@@ -88,7 +89,7 @@ public class AgentPromptBuilder {
         return sb.toString();
     }
 
-    // 라인 번호가 어느 버전(head/base/과거 diff) 기준인지 명시해 잘못된 참조를 막는다
+    // 라인 번호가 어느 버전(head/base/과거 diff) 기준인지 명시해 잘못된 참조를 막습니다.
     private static void appendLineAnchor(StringBuilder sb, CommentContext c) {
         if (c.getLine() != null) {
             boolean left = "LEFT".equalsIgnoreCase(c.getSide());

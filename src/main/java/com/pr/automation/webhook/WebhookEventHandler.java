@@ -17,10 +17,8 @@ import org.springframework.stereotype.Component;
 import java.util.Optional;
 
 /**
- * 웹훅 페이로드를 파싱/필터링해 분석 대상 코멘트만 골라냄
- * 통과한 코멘트는 비동기 분석을 트리거함
- *
- * deliveryStore.markReceived는 ack 완료 시점에만 호출 — ping/필터 탈락은 즉시, 분석 대상은 CommentAnalysisService가 분석 성공 후 호출함
+ * 웹훅 페이로드를 파싱/필터링해서, 분석 대상이 되는 이벤트만 골라 각 서비스로 라우팅하는 클래스
+ * ping, PR 생성, 코멘트 생성 등 이벤트 종류별 분기와, 봇/타인 PR 등 비즈니스 룰 필터링을 모두 여기서 처리
  */
 @Slf4j
 @Component
@@ -46,7 +44,7 @@ public class WebhookEventHandler {
             return;
         }
 
-        // PR 생성(opened) 이벤트 → 4단계 자동 리뷰 경로
+        // PR 생성 이벤트 → 4단계 자동 리뷰 경로로 위임
         if (EVENT_PULL_REQUEST.equals(event)) {
             handlePullRequest(deliveryId, rawBody);
             return;
@@ -63,7 +61,7 @@ public class WebhookEventHandler {
 
         CommentEvent ce = extracted.get();
 
-        // 코멘트 분석 전역 kill-switch — 비활성이면 트리거하지 않고 ack (복구 대상에서 제외)
+        // 코멘트 분석 전역 kill-switch - 비활성이면 트리거하지 않고 ack
         if (!prAnalyzerProperties.isEnabled()) {
             log.info("코멘트 분석 비활성화(PR_ANALYZER_ENABLED=false), 건너뜀: {} #{} comment={} (delivery={})",
                     ce.getRepoFullName(), ce.getPrNumber(), ce.getCommentId(), deliveryId);
@@ -79,22 +77,22 @@ public class WebhookEventHandler {
             }
         }
         log.info("코멘트 분석 트리거: {} #{} comment={} (delivery={})", ce.getRepoFullName(), ce.getPrNumber(), ce.getCommentId(), deliveryId);
-        // 분석 분기는 여기서 markReceived 호출하지 않음 — 분석 성공 시점에 CommentAnalysisService가 호출
+        // 분석 분기는 여기서 markReceived 호출하지 않음 - 분석 성공 시점에 CommentAnalysisService가 호출
         commentAnalysisService.analyzeAsync(ce);
     }
 
-    // PR 생성(opened) 처리: 내 PR이고 봇이 아니면 4단계 리뷰 비동기 트리거
+    // PR 생성 처리: 내 PR이고 봇이 아니면 4단계 리뷰 비동기 트리거
     private void handlePullRequest(String deliveryId, byte[] rawBody) {
         Optional<PrReviewEvent> extracted = extractPullRequest(deliveryId, rawBody);
         if (!extracted.isPresent()) {
             log.debug("PR 리뷰 대상 아님, 무시 (delivery={})", deliveryId);
-            // 리뷰 대상이 아닌 webhook도 ack — 복구 대상에서 제외
+            // 리뷰 대상이 아닌 webhook도 ack - 복구 대상에서 제외
             deliveryStore.markReceived(deliveryId);
             return;
         }
         PrReviewEvent pre = extracted.get();
         log.info("PR 자동 리뷰 트리거: {} #{} (delivery={})", pre.getRepoFullName(), pre.getPrNumber(), deliveryId);
-        // 분석 분기는 markReceived 호출하지 않음 — 리뷰 성공 시점에 PrReviewService가 호출
+        // 분석 분기는 markReceived 호출하지 않음 - 리뷰 성공 시점에 PrReviewService가 호출
         prReviewService.reviewAsync(pre);
     }
 
@@ -122,6 +120,7 @@ public class WebhookEventHandler {
         return true;
     }
 
+    // 파싱된 페이로드에서 저장소/PR 번호/제목/본문/head SHA/작성자/URL을 뽑아 PrReviewEvent로 변환
     private PrReviewEvent buildPrReviewEvent(String deliveryId, WebhookPayload payload) {
         WebhookPayload.PullRequest pr = payload.getPullRequest();
         return PrReviewEvent.builder()
@@ -149,7 +148,7 @@ public class WebhookEventHandler {
                 .map(p -> buildCommentEvent(event, deliveryId, p));  // 최종 CommentEvent DTO로 변환
     }
 
-    // 1. 파싱 및 기본 검증
+    // issue_comment 또는 pull_request_review_comment만 인정
     private boolean isSupportedEvent(String event) {
         return EVENT_REVIEW_COMMENT.equals(event) || EVENT_ISSUE_COMMENT.equals(event);
     }

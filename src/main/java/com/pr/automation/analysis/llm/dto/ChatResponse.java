@@ -7,7 +7,7 @@ import lombok.Setter;
 
 import java.util.List;
 
-// LLM에게 받는 응답
+// API 응답 바디(choices 리스트)를 담는 최상위 DTO
 @Getter
 @Setter
 @NoArgsConstructor
