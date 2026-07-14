@@ -20,11 +20,8 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 
 /**
- * PR 생성 시 4단계 자동 리뷰 파이프라인
+ * PR 생성 시, 웹훅을 받아 4단계 리뷰 파이프라인 전체를 오케스트레이션하는 서비스 계층
  * 중복 확인 → 변경 파일 조회 → 4단계 리뷰 → PR 코멘트 게시 → (옵션) Slack → 처리 기록
- *
- * deliveryStore.markReceived는 성공 시점에만 호출 — 실패 시 호출하지 않아 recoverer가 재전송할 수 있게 함
- * CommentAnalysisService와 동일한 점유/ack 규약을 따릅니다.
  */
 @Slf4j
 @Service

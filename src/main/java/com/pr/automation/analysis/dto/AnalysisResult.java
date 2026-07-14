@@ -6,17 +6,17 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
-// LLM의 응답
+// LLM이 submit_analysis 도구로 제출하는 최종 분석 결과를 담는 DTO
 @Getter
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class AnalysisResult {
     @JsonProperty("comment_summary")
-    private String commentSummary; // 리뷰어가 코멘트에서 지적하거나 제안한 내용 요약
+    private String commentSummary; // 코멘트 요약
 
     @JsonProperty("current_approach")
-    private String currentApproach; // 현재 코드가 어떤 방식으로 구현되어 있는지 요약
+    private String currentApproach; // 현재 구현 방식
 
     @JsonProperty("suggested_approach")
     private String suggestedApproach; // 리뷰어가 제안하는 대안 방식

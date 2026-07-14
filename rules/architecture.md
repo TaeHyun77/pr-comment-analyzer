@@ -1,69 +1,90 @@
 # 아키텍처
 
+> 이 문서는 구조와 규약만 정의합니다. 클래스명, 메서드명 등 내부 구현은 언제든 변경될 수 있으므로 언급하지 않습니다. 구체 구현은 코드와 주석을 따릅니다.
+
 ## 개요
 
-자신의 GitHub PR에 달린 코멘트를 받아 LLM으로 분석하고 결과를 Slack으로 보내는 시스템
+자신의 GitHub PR 활동을 LLM으로 분석/리뷰하고 결과를 통지하는 시스템으로, 독립적인 두 파이프라인을 가집니다.
 
-흐름: PR 코멘트 → GitHub Webhook → 서명 검증 → 필터링 → (비동기) LLM 자율 탐색 분석 → Slack Incoming Webhook
+1. 코멘트 분석: PR에 달린 코멘트를 받아 LLM이 레포 코드를 자율 탐색하며 분석하고, 결과를 Slack으로 통지합니다
+2. PR 자동 리뷰: PR 생성 시 변경 diff 전체를 다단계로 리뷰하고, 결과를 PR 코멘트로 게시합니다
 
-LLM 분석은 단발 호출이 아니라, LLM이 도구로 레포 파일을 스스로 조회하며 코멘트가 가리키는 코드의 함수 호출, 설정 파일을 추적하는 에이전트 루프( 레포 조회 불가 시 분석 실패 )
+- 트리거: GitHub Repository Webhook (서명 검증 필수)
+- LLM: OpenAI 호환 Chat Completions API (현재 Groq, 환경변수로 교체 가능)
+- 통지: Slack Incoming Webhook / GitHub PR 코멘트
+- 상태 저장: MySQL (중복 방지/복구, 영속화)
+- 기술 스택: Spring Boot 2.7 / Java 8 / Spring Data JPA
 
-- 트리거: GitHub Repository Webhook 
-- LLM: Groq (OpenAI 호환 Chat Completions API), RestTemplate로 직접 호출
-- 통지: Slack Incoming Webhook 
-- 기술 스택: Spring Boot 2.7.18 / Java 8 / Jackson 3
+## 전체 흐름
 
-## 트리거와 분석의 분리
+```
+GitHub Webhook
+  → 서명 검증 + 빠른 필터링(동기, 즉시 200 응답)
+  → 작업 점유(중복 방지)
+  → LLM 분석/리뷰(비동기)
+  → 결과 통지(Slack 또는 PR 코멘트)
+  → 처리 완료 기록(ack)
+```
 
-`CommentAnalysisService`(코멘트 → 분석 → Slack)는 트리거와 무관하게 재사용된다 
-현재 트리거는 웹훅 하나지만, 나중에 폴링 폴러를 추가해도 같은 서비스를 호출하면 됨
+실패 시 점유를 해제하고 완료 기록을 남기지 않습니다 → 복구 사이클이 재전송으로 다시 시도합니다.
 
-## 자율 탐색 에이전트 루프
+## 계층별 역할
 
-`GroqClient.analyze(context, reader)`는 폴백 없이 항상 에이전트 루프로 동작하며, reader는 필수
+- 웹훅 수신부: 서명 검증(HMAC, 타이밍 세이프 비교)과 이벤트 파싱/필터링(이벤트 타입, 내 PR 여부, 봇 제외)만 동기로 수행하고 즉시 200을 반환합니다. GitHub은 웹훅 응답을 ~10초 안에 받지 못하면 실패로 처리하기 때문입니다
+- 분석/리뷰 서비스: 트리거와 무관하게 재사용되는 진입점으로, 점유 → 실행 → 통지 → 완료 기록의 수명주기를 책임집니다. 비동기 스레드의 예외는 전역 예외 핸들러가 잡지 못하므로 서비스 내부에서 처리하고 Slack 실패 알림을 보냅니다
+- LLM 전송 계층: API 호출과 재시도(429/5xx/네트워크 순단에 지수 백오프 + 지터)만 담당하는 순수 전송부입니다. 프롬프트 구성이나 대화 루프는 책임지지 않습니다
+- GitHub 연동부: 파일/디렉터리/PR 정보 조회와 코멘트 게시를 담당합니다. 조회 실패는 삼키고(분석은 가능한 범위에서 계속), 게시 실패는 예외로 던져 호출자가 인지/재시도하게 합니다
+- 상태 저장부: 작업 점유/완료와 delivery ack를 DB에 영속화합니다 (아래 규약 참조)
+- 복구부: 완료 기록이 없는 delivery를 GitHub Redelivery API로 재전송시킵니다
 
-- reader 결정 (`CommentAnalysisService.repoFileReader`): GitHub 토큰이 있어야 하고, `headSha`가 있으면 그대로, 없으면(issue_comment 등) GitHub API로 PR head SHA를 조회함
-  ( 토큰이 없거나 head SHA를 끝내 확보하지 못하면 `REPO_NOT_READABLE` 예외(분석 중단) )
-- 에이전트 루프 : LLM에 `read_file`·`list_directory`·`submit_analysis` 도구를 노출하고, LLM이 코멘트가 가리키는 코드의 함수 정의·설정 파일을 스스로 조회하며 `submit_analysis` 호출로 종료한다.
-- 레포/ref는 서버가 `headSha`로 고정(LLM은 경로만 지정) → 읽기 전용·단일 커밋 스코프
-- 결과 스키마는 `submit_analysis` 도구의 파라미터로 강제(휴리스틱 JSON 파싱 제거)
-- 예산: `maxToolIterations`(라운드)·`maxFiles`·`maxFileChars`. 소진 시 도구를 `submit_analysis`만 남겨 강제 마무리, 그래도 미제출이면 `AI_RESPONSE_PARSE_ERROR`
-  `maxToolIterations<=0`은 오설정으로 보고 진입 전 즉시 실패(`AI_API_ERROR`)
-- 파일 조회 실패는 예외가 아닌 도구 결과 메시지로 회신해 LLM이 경로를 바꿔 재시도
+## 코멘트 분석 — 자율 탐색 에이전트 루프
 
-## PR 생성 시 4단계 자동 리뷰 (`com.pr.automation.review`)
+단발 호출이 아니라, LLM에게 파일 읽기, 디렉터리 조회, 결과 제출 도구를 노출하고 LLM이 코멘트가 가리키는 코드의 정의/설정을 스스로 추적하는 에이전트 루프입니다.
 
-코멘트 분석과 별개로, PR `opened` 이벤트를 받아 PR 전체를 4단계로 리뷰하고 결과를 PR 코멘트로 게시한다. 기존 코멘트 분석 경로(`analysis.*`)는 건드리지 않고 별도 패키지로 격리했다.
+- 레포 조회가 불가능하면(토큰 없음, head SHA 확보 실패) 분석 자체를 중단합니다 — 폴백 없음
+- 조회 기준 커밋은 서버가 PR head SHA로 고정합니다 (LLM은 경로만 지정, 읽기 전용, 단일 커밋 스코프)
+- 결과 스키마는 제출 도구의 파라미터로 강제합니다 (휴리스틱 JSON 파싱 배제)
+- 예산(라운드 수, 파일 수, 파일당 문자 수, 디렉터리 엔트리 수)을 두고, 소진 시 제출 도구만 남겨 강제 마무리합니다. 그래도 미제출이면 실패 처리합니다
+- 파일 조회 실패는 예외가 아닌 도구 결과 메시지로 회신해 LLM이 경로를 바꿔 재시도하게 합니다
 
-흐름: `pull_request` opened → `WebhookEventHandler.handlePullRequest`(action=opened·내 PR·봇 제외 필터) → `PrReviewService.reviewAsync`(@Async) → `GithubClient.fetchPullFiles`(변경 파일+patch) → `PrReviewPipeline.run`(4단계) → `PrReviewCommentFormatter`(Markdown) → `GithubClient.createIssueComment` → (옵션) Slack
+## PR 자동 리뷰 — 다단계 파이프라인
 
-- 단계: 언어 → 프레임워크/인프라 → 도메인/보안 → 최종검증. 각 단계는 **정확히 1회 LLM 호출**(자율 파일 탐색 없음)이며, 이전 단계 발견을 다음 단계 입력으로 넘긴다. 1~3단계는 `submit_findings`, 최종검증은 `submit_review`를 강제 tool_choice로 호출해 구조화 결과를 받는다.
-- 최종검증 단계가 1~3단계 발견을 종합·중복제거·오탐제거하고, 사람 리뷰어가 판단할 본질적 포인트(`reviewerFocusNotes`)를 도출한다.
-- 중복 방지: `PrReviewStore`가 `repo#pr` 키로 리뷰 완료를 영속(웹훅 재전송 시 재리뷰 차단). `CommentStore`와 동일 패턴, 키 타입만 String.
-- ack 규약은 코멘트 경로와 동일: 성공 시에만 `DeliveryStore.markReceived`, 실패 시 점유 해제 + Slack 실패 알림(복구 대상으로 남김).
-- PR 코멘트 게시는 토큰 쓰기 권한 필요. `GithubClient.createIssueComment`는 읽기 메서드와 달리 실패를 삼키지 않고 예외를 던져 호출자가 인지·재시도하게 한다.
-- 예산: `pr-review.max-files`(diff 파일 수)·`max-patch-chars`(파일별 patch 길이)로 토큰 보호, 초과분은 truncate 후 그 사실을 명시.
+PR 변경 파일 목록(diff)을 입력으로, 관점별 단계(언어 → 프레임워크/인프라 → 도메인/보안 → 최종검증)를 순차 실행합니다.
 
-## 동기/비동기 경계
+- 각 단계는 정확히 1회 LLM 호출(자율 탐색 없음)이며, 이전 단계의 발견을 다음 단계 입력으로 넘깁니다
+- 최종검증 단계가 발견들을 종합, 중복 제거, 오탐 제거하고, 사람 리뷰어가 판단할 포인트를 도출합니다
+- 결과 스키마는 도구 호출 강제(tool_choice)로 받습니다
+- 토큰 보호 예산(파일 수, 파일당 patch 길이)을 두고, 초과분은 잘라낸 뒤 그 사실을 명시합니다
+- 결과 게시는 쓰기 권한이 필요하므로 실패를 삼키지 않고 예외로 전파합니다
 
-- 웹훅 컨트롤러: 서명 검증 + 빠른 필터(이벤트 타입/action/PR 작성자/봇)만 동기로 하고 즉시 200 반환 ( GitHub은 webhook 응답을 10초(상황에 따라 30초) 안에 받지 못하면 failed로 처리하기 때문 )
-- 분석(LLM 호출): `@Async("analysisExecutor")`로 분리. 비동기 스레드 예외는 `@RestControllerAdvice`가 못 잡으므로 `CommentAnalysisService` 내부에서 try-catch 후 로그 + Slack 실패 알림
+## 상태 저장과 중복 방지 (MySQL)
+
+같은 작업이 두 번 실행되는 경로(웹훅 재전송, 복구 사이클, 다중 인스턴스)가 설계상 존재하므로, 모든 작업은 실행 전 DB에서 점유를 얻어야 합니다.
+
+- 원자적 점유: 작업 키(코멘트 ID, repo#pr)를 PK로 INSERT를 시도합니다. PK 제약이 확인-등록을 단일 연산으로 만들어, 몇 개의 인스턴스가 동시에 시도해도 하나만 성공합니다
+- lease: 점유 후 일정 시간 동안 완료/실패가 없으면 죽은 워커의 점유로 간주하고, 다른 워커가 조건부 UPDATE(영향 행 수 확인)로 원자적으로 탈취할 수 있습니다. 점유를 영속화하면서 생기는 "크래시 시 영구 봉인" 문제의 해독제입니다
+- 완료 기록: 완료된 작업 키는 영구히 재실행이 차단됩니다. 실패 시에는 점유 행을 삭제해 재시도를 허용합니다
+- 주의: DB는 인스턴스 간 정합성을 보장할 뿐, 외부 부수효과(Slack 발송, 코멘트 게시)의 exactly-once는 보장하지 않습니다. 부수효과와 완료 기록 사이의 크래시는 점유 실패 → ack 경로로 자가 치유됩니다
 
 ## 웹훅 복구 (Redelivery)
 
-webhook 응답을 분석 시작 전에 200으로 반환하므로 GitHub은 우리 쪽 크래시를 인지하지 못하고 자동 재시도하지 않는다. 그 결과 다음 시나리오에서 분석 작업이 영구 손실될 수 있다 — 작업 중/큐 대기 중 크래시, 서비스 다운타임 동안 도착한 webhook, 큐 포화 거부, 네트워크 단절, Slack 자체 장애로 인한 실패 알림 누락.
+웹훅 응답을 분석 시작 전에 200으로 반환하므로, GitHub은 우리 쪽 크래시를 인지하지 못하고 재시도하지 않습니다. 그 공백을 GitHub Webhook Redelivery API로 메웁니다.
 
-외부 인프라(Redis/DB) 추가 없이 GitHub Webhook Redelivery API(`POST /repos/{o}/{r}/hooks/{hookId}/deliveries/{id}/attempts`)를 활용해 복구한다. `DeliveryStore`는 "우리가 책임을 다 진 delivery의 guid"를 JSON 파일에 영속하는 ledger로, 부팅 시 메모리에 복원되어 중복 redeliver 요청을 차단한다.
+- ack 규약: "우리가 책임을 다 진 delivery"(ping, 필터 탈락, 분석/리뷰 성공)만 완료로 기록합니다. 실패는 기록하지 않습니다 — 완료 기록 없음 = 복구 대상이라는 신호입니다
+- 트리거 둘: 부팅 시 1회(긴 lookback, 다운타임 직후 회복) + 주기 스케줄러(짧은 lookback, 운영 중 사각지대 회복)로 구성되며, 둘 다 같은 복구 로직을 호출합니다
+- 식별: deliveries 응답이 시간 내림차순임에 의존해, cutoff를 만나면 순회를 중단합니다
+- 포이즌 상한: 같은 delivery의 재전송 트리거 횟수를 기록하고, 상한 초과 시 복구를 포기합니다(경고 로그). 항상 실패하는 작업이 LLM 비용을 무한히 태우는 것을 차단합니다. 포기해도 완료로 위장하지 않아 커버리지 통계에는 누락으로 정직하게 남습니다
+- 수동 운영: 내부 엔드포인트로 수동 복구 트리거와 발생/처리 커버리지 조회가 가능합니다
+- 한계: GitHub deliveries 보관 기간(~30일)을 넘긴 다운타임은 복구가 불가합니다. 다중 hook 환경에서는 경고 후 첫 번째 active hook을 선택합니다
 
-- `markReceived` 호출 타이밍: ping/필터링 탈락은 `WebhookEventHandler`에서 즉시, 분석 대상은 `CommentAnalysisService`가 분석 성공 직후에 호출. **분석 실패 시 호출하지 않음** — 흔적 없음 = 다음 회차 복구 대상이라는 신호.
-- 트리거 둘 — **부팅 시 1회**(`ApplicationReadyEvent`, 24h lookback)로 다운타임 직후 즉시 회복 + **30분 스케줄러**(`@Scheduled`, 1h lookback)로 운영 중 사각지대 자동 회복. 두 진입점 모두 같은 `WebhookRedeliveryRecoverer.recoverNow(int)`를 호출.
-- 식별 알고리즘: `listDeliveries` 응답은 `delivered_at` 내림차순이므로 앞에서부터 순회 → `delivered_at < cutoff`면 break, `deliveryStore.isReceived(guid)`면 skip, 그 외는 `redeliver` 호출. 단일 페이지(per_page=100)로 충분.
-- 수동 운영 엔드포인트: `POST /internal/recovery/run?hours=N`(수동 트리거), `GET /internal/recovery/coverage?hours=N`(발생/처리 코멘트 통계).
-- 한계: GitHub deliveries 보관 ~30일. 30일 이상 다운타임은 복구 불가. 자동 hook 발견은 다중 hook 환경에서 WARN 후 첫 번째 active hook 선택.
+## 동기/비동기 경계
 
-## 외부 호출 시 주의
+- 동기(웹훅 응답 스레드): 서명 검증 + 파싱/필터링까지만 수행합니다
+- 비동기(전용 스레드 풀): LLM 호출을 포함한 분석/리뷰 전체를 수행합니다. 종료 시그널에 진행 중 작업이 잘리지 않도록 유예 시간을 두고, 큐 포화로 거부된 작업은 로그를 남깁니다 (완료 기록이 없으므로 복구 사이클이 회수합니다)
 
-- Spring Boot 4는 Jackson 3을 사용한다(`tools.jackson.databind.ObjectMapper`, 어노테이션은 `com.fasterxml.jackson.annotation.*` 유지)
-- 외부 API DTO는 전역 네이밍 전략에 의존하지 않고 `@JsonProperty`로 snake_case를 명시한다(GitHub payload, Groq 요청, AnalysisResult)
-- `RestClient`는 `RestClient.builder()`로 직접 생성한다(이 프로젝트에는 `RestClient.Builder` 자동 구성 빈이 없다)
-- GitHub contents API처럼 경로에 `/`가 들어가는 호출은 `owner`/`repo`를 URI 변수로 따로 넘긴다(`{repo}`에 `owner/repo`를 넣으면 `/`가 인코딩됨)
+## 외부 연동 원칙
+
+- 외부 API DTO는 전역 네이밍 전략에 의존하지 않고 필드별 어노테이션으로 snake_case를 명시합니다
+- 모든 외부 호출에 connect/read 타임아웃을 겁니다. LLM read 타임아웃은 모델별 편차가 커 별도 설정으로 분리합니다
+- 경로에 `/`가 들어가는 GitHub API 호출은 URI 변수 인코딩에 주의합니다 (경로 변수에 `owner/repo`를 통째로 넣으면 `/`가 인코딩됩니다)
+- 설정은 전부 환경변수로 주입하며, 필수값은 부팅 직후 검증해 누락 시 즉시 종료합니다. 항목과 기본값은 `.env.example`을 참조합니다

@@ -6,7 +6,8 @@ import lombok.Getter;
 
 import java.util.List;
 
-// LLM에 전달하기 위해 가공한 컨텍스트 정보
+// AgentPromptBuilder가 프롬프트를 만들 때 사용하는, 가공된 입력 컨텍스트
+// PR 정보, 코멘트 위치(파일/라인/side), 코드 맥락, 파일 patch, 부모 스레드, 코멘트 본문 등
 @Getter
 @Builder
 @AllArgsConstructor

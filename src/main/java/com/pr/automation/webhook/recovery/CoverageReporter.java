@@ -19,10 +19,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
-/** 발생한 PR 코멘트와 우리 시스템이 ack 처리한 코멘트의 수를 비교
- * 분모 : GitHub deliveries 응답에서 event ∈ {issue_comment, pull_request_review_comment} AND action == "created" 카운트
- * 분자 : 위 중 guid가 DeliveryStore에 있는 수 (ack 완료 — 분석 성공 / 필터 탈락 모두 포함)
- */
+// 실제 발생한 PR 코멘트 수 대비, 우리 시스템이 ack 처리한 코멘트 수를 비교하는 클래스
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -36,6 +33,7 @@ public class CoverageReporter {
     private final GithubDeliveryClient deliveryClient;
     private final DeliveryStore deliveryStore;
 
+    // 설정된 각 저장소를 순회하며 reportRepo()로 개별 커버리지를 구하고, 전체 합계를 로그로 남긴 뒤 CoverageReport를 반환
     public CoverageReport report(int lookbackHours) {
         int effectiveHours = lookbackHours > 0 ? lookbackHours : DEFAULT_LOOKBACK_HOURS;
         List<RepoCoverage> per = new ArrayList<>();

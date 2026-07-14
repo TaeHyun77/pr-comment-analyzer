@@ -23,10 +23,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * GitHub REST API 호출 - 토큰이 없으면 비활성 상태이며 모든 조회가 empty()를 반환
- * 조회 실패는 분석을 막지 않도록 예외를 삼키고 빈 값을 반환
- */
+// PR 코멘트/파일/디렉터리 조회, PR에 코멘트 게시 등 범용 GitHub API 호출을 담당하는 클래스
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -34,11 +31,13 @@ public class GithubClient {
     private final RestTemplate githubRestTemplate;
     private final GithubProperties githubProperties;
 
+    // githubProperties에 토큰이 설정돼 있는지로 클라이언트 활성 여부를 판단
     public boolean isEnabled() {
         return StringUtils.hasText(githubProperties.getToken());
     }
 
-    // PR 리뷰 코멘트 단건을 조회 - 답글의 부모 코멘트를 조회하기 위해 사용
+    // 리뷰 코멘트 단건을 조회합니다
+    // 답글의 부모 코멘트 내용을 가져와 CommentAnalysisService가 스레드 맥락을 구성할 때 사용
     public Optional<FetchedComment> fetchReviewComment(String repoFullName, long commentId) {
         if (!isEnabled()) return Optional.empty();
 
@@ -73,7 +72,7 @@ public class GithubClient {
     }
 
     // PR의 현재 head 커밋 SHA 조회 ( issue_comment처럼 페이로드에 head SHA가 없을 때 사용 )
-    // 이 PR 브랜치의 최신 커밋( 변경이 다 반영된 after 상태 ) 을 조회해, 파일들을 그 기준으로 읽기 위한 것
+    // 이 PR 브랜치의 최신 커밋 ( 변경이 다 반영된 after 상태 ) 을 조회해, 파일들을 그 기준으로 읽기 위한 것
     public Optional<String> fetchPullHeadSha(String repoFullName, int prNumber) {
         if (!isEnabled()) return Optional.empty();
 
@@ -98,7 +97,7 @@ public class GithubClient {
         }
     }
 
-    // 특정 커밋을 기준으로 레포의 파일 하나 내용을 읽어옴, 파일이 아닌( 디렉터리/심볼릭링크 등 ) 경로면 empty
+    // 특정 커밋을 기준으로 레포의 파일 하나의 내용을 읽어옴, 파일이 아닌( 디렉터리/심볼릭링크 등 ) 경로면 empty 반환
     public Optional<FetchedFile> fetchFileContent(String repoFullName, String path, String ref) {
         if (!isEnabled()) return Optional.empty();
 
@@ -117,7 +116,8 @@ public class GithubClient {
         }
     }
 
-    // 디렉터리 안의 파일/하위디렉터리 목록을 가져옴 ( path가 빈 문자열이면 레포 루트 )
+    // 디렉터리 안의 파일/하위 디렉터리 목록을 가져옵니다. ( path가 빈 문자열이면 레포 루트를 조회 )
+    // 에이전트의 list_directory 도구가 이 메서드를 호출합니다.
     public Optional<List<DirEntry>> listDirectory(String repoFullName, String path, String ref) {
         if (!isEnabled()) return Optional.empty();
 
@@ -149,10 +149,8 @@ public class GithubClient {
         }
     }
 
-    /**
-     * PR의 변경 파일 목록(파일명/상태/patch)을 가져옴, 첫 페이지(최대 100개)만 조회
-     * 조회 실패는 분석을 막지 않도록 예외를 삼키고 빈 리스트를 반환
-     */
+    // PR에서 변경된 파일 목록을 100개까지 조회합니다.
+    // CommentAnalysisService.fetchFilePatch가 특정 파일의 전체 diff를 찾을 때, 그리고 PrReviewService가 리뷰 대상 diff 전체를 가져올 때 사용
     public List<ChangedFile> fetchPullFiles(String repoFullName, int prNumber) {
         if (!isEnabled()) return Collections.emptyList();
 
@@ -186,10 +184,7 @@ public class GithubClient {
         }
     }
 
-    /**
-     * PR(=issue)에 코멘트를 작성 -> 리뷰 결과를 PR 코멘트로 올리는 용도
-     * 게시 실패는 호출자가 인지해야 하므로(폴백/재시도) 예외를 던집니다, 토큰에 쓰기 권한(issues/PR write)이 없으면 실패
-     */
+    // PR(=issue)에 코멘트를 게시합니다.
     public void createIssueComment(String repoFullName, int prNumber, String body) {
         if (!isEnabled()) {
             throw new AutomationException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.GITHUB_API_ERROR, "GitHub 토큰 미설정으로 코멘트 게시 불가");

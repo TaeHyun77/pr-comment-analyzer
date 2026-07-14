@@ -71,9 +71,8 @@ public class CommentAnalysisService {
         return result;
     }
 
-    // 자율 탐색 reader를 만듦 > LLM이 스스로 레포 파일을 뒤져볼 수 있게 해주는 통로 객체 생성
-    // headSha가 없으면(issue_comment 등) GitHub API로 PR head SHA를 조회
-    // GitHub 비활성이거나 head SHA를 확보할 수 없으면 분석을 진행할 수 없으므로 예외
+    // 자율 파일 탐색용 RepoFileReader 구현체( GithubRepoFileReader )를 생성합니다.
+    // headSha가 없으면(issue_comment ...) GitHub API로 PR head SHA를 별도 조회하며, 확보 못하면 예외를 던집니다.
     private RepoFileReader repoFileReader(CommentEvent e) {
         if (!githubClient.isEnabled()) {
             throw new AutomationException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.REPO_NOT_READABLE, "GitHub 토큰 미설정으로 레포 조회 불가");
@@ -89,6 +88,8 @@ public class CommentAnalysisService {
         return new GithubRepoFileReader(githubClient, e.getRepoFullName(), headSha);
     }
 
+    // CommentEvent를 CommentContext로 변환합니다.
+    // diff hunk 유무에 따라 코드 맥락 문자열을 만들고, 답글이 있으면 부모 코멘트를 조회해 붙이고, 파일 전체 diff를 fetchFilePatch로 채웁니다.
     private CommentContext buildContext(CommentEvent e) {
         StringBuilder code = new StringBuilder();
 
@@ -123,7 +124,8 @@ public class CommentAnalysisService {
                 .build();
     }
 
-    // 코멘트가 달린 파일의 전체 변경 diff ( 모든 hunk ), 미확보 시 null이며 분석은 계속 진행
+    // review_comment이고 파일 경로가 있을 때만 GitHub PR 변경 파일 목록에서 해당 파일의 patch( 전체 diff )를 찾아 반환합니다.
+    // 못 찾으면 null이며 분석은 계속 진행됩니다.
     private String fetchFilePatch(CommentEvent e) {
         if (!e.isReviewComment() || !StringUtils.hasText(e.getFilePath()) || !githubClient.isEnabled()) {
             return null;

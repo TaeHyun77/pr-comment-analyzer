@@ -9,8 +9,7 @@ import lombok.Setter;
 
 import java.util.List;
 
-// 단계별(언어/프레임워크·인프라/도메인·보안) 리뷰 결과
-// findings/summary는 LLM이 채우고, stageName은 파이프라인이 주입
+// 1~3단계 각각의 리뷰 결과를 담는 DTO
 @Getter
 @Setter
 @Builder

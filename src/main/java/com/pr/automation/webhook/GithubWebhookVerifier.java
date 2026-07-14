@@ -14,13 +14,15 @@ import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 
-// GitHub 웹훅의 X-Hub-Signature-256 헤더(HMAC-SHA256)를 raw 바디 기준으로 검증함
+// 요청이 진짜 GitHub에서 온 것인지 서명으로 검증하는 클래스
 @Component
 @RequiredArgsConstructor
 public class GithubWebhookVerifier {
     private static final String PREFIX = "sha256=";
     private final GithubProperties githubProperties;
 
+    // 시크릿 미설정이면 서버 오류로 예외, 서명 헤더가 없거나 "sha256=" 접두사가 아니면 401 예외를 던짐
+    // 서버가 직접 계산한 HMAC 값과 헤더에 담긴 값을 비교하여 다르면 401 반환
     public void verify(byte[] rawBody, String signatureHeader) {
         if (!StringUtils.hasText(githubProperties.getWebhookSecret())) {
             throw new AutomationException(HttpStatus.INTERNAL_SERVER_ERROR, ErrorCode.WEBHOOK_SIGNATURE_INVALID, "github.webhook-secret 미설정");
@@ -36,6 +38,7 @@ public class GithubWebhookVerifier {
         }
     }
 
+    // HmacSHA256 알고리즘으로 raw 바디의 HMAC 서명을 계산
     private static byte[] hmacSha256(byte[] data, String key) {
         try {
             Mac mac = Mac.getInstance("HmacSHA256");

@@ -10,14 +10,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-// 에이전트가 사용할 도구 스키마/이름/tool_choice 옵션을 캡슐화
+// 에이전트가 사용할 도구(함수)와 선택 옵션을 캡슐화한 클래스 (읽기 전용 도구 3종 - 파일 읽기, 디렉터리 조회, 최종 제출)
 @Component
 public class AgentToolSpecs {
     public static final String TOOL_READ_FILE = "read_file";
     public static final String TOOL_LIST_DIR = "list_directory";
     public static final String TOOL_SUBMIT = "submit_analysis";
 
-    // LLM에 넘길 도구 목록을 제시
+    // LLM에 줄 도구 목록 제시
     public List<Tool> tools(boolean onlySubmit) {
         if (onlySubmit) { // onlySubmit 값이 true 라면, LLM 에게 submitTool() 도구만을 제공 ( 지금까지의 정보만으로 결론을 반환하도록 강제 )
             return Collections.singletonList(submitTool());

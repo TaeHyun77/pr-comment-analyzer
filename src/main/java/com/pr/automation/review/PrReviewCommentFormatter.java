@@ -9,10 +9,9 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
-// PrReviewResult를 GitHub PR 코멘트용 Markdown으로 변환한다.
+// 4단계 파이프라인의 최종 결과를 GitHub PR 코멘트용 md 문자열로 변환합니다.
 @Component
 public class PrReviewCommentFormatter {
-
     public String format(PrReviewResult result) {
         StringBuilder sb = new StringBuilder();
         sb.append("## 자동 PR 리뷰 (4단계)\n\n");
@@ -31,6 +30,7 @@ public class PrReviewCommentFormatter {
         return sb.toString();
     }
 
+    // 발견된 이슈 목록을 심각도 순으로 정렬해 렌더링
     private String renderFindings(List<ReviewFinding> findings) {
         if (findings == null || findings.isEmpty()) {
             return "### 확정 이슈\n발견된 기계적 이슈가 없습니다. \n\n";

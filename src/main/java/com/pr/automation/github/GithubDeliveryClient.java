@@ -20,10 +20,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * 웹훅 delivery 조회 + 재전송 전용 GitHub API 클라이언트
- * 기존 GithubClient와 동일하게 토큰 없으면 비활성, 실패는 swallowing
- */
+// 웹훅 delivery 조회 + 재전송 전용 클래스
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -34,12 +31,13 @@ public class GithubDeliveryClient {
     private final RestTemplate githubRestTemplate;
     private final GithubProperties githubProperties;
 
+    // 토큰 유무로 활성 여부를 판단
     public boolean isEnabled() {
         return StringUtils.hasText(githubProperties.getToken());
     }
 
     // 레포에 등록된 active webhook 중 issue_comment 또는 pull_request_review_comment를
-    // 구독하는 첫 번째 hook 반환. 여러 개면 WARN 후 첫 번째
+    // 구독하는 첫 번째 hook 반환. 여러 개면 WARN 후 첫 번째를 사용
     public Optional<Long> findHookId(String repoFullName) {
         if (!isEnabled()) {
             return Optional.empty();
@@ -81,7 +79,7 @@ public class GithubDeliveryClient {
         }
     }
 
-    // hook의 최근 delivery 목록
+    // 해당 hook의 최근 delivery 목록을 최대 100개까지 조회
     public Optional<List<GhDelivery>> listDeliveries(String repoFullName, long hookId) {
         if (!isEnabled()) {
             return Optional.empty();

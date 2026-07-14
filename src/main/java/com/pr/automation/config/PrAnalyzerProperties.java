@@ -12,7 +12,6 @@ import org.springframework.boot.context.properties.ConstructorBinding;
 public class PrAnalyzerProperties {
 
     private final boolean includeOwnComments;
-    private final String stateFile;
 
     // 자율 탐색 에이전트 루프 예산(균형 기본값). 0/음수면 폴백(단발) 경로만 사용
     private final int maxToolIterations; // 최대 툴 라운드 수

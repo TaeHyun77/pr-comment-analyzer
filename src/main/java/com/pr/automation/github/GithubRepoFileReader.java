@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
+// RepoFileReader의 구현체
 @RequiredArgsConstructor
 public class GithubRepoFileReader implements RepoFileReader { // LLM의 깃허브 파일 요청을 GitHub API 호출로 바꿔주는 중간 어댑터
     private final GithubClient githubClient;

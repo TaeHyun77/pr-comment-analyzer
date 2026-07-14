@@ -1,102 +1,47 @@
 package com.pr.automation.review;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.pr.automation.config.PrReviewProperties;
-import lombok.AllArgsConstructor;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.PostConstruct;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import java.time.Duration;
+import java.time.Instant;
 
 // 이미 리뷰한 PR 키(repo#pr)를 기억해 중복 리뷰(웹훅 재전송 포함)를 막습니다.
 // CommentStore와 동일한 패턴 - 키 타입만 String
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class PrReviewStore {
-    private static final int MAX_KEYS = 5_000;
+    // 점유 후 이 시간 동안 완료/실패가 없으면 죽은 워커의 점유로 간주해 탈취를 허용
+    static final Duration LEASE_TIMEOUT = Duration.ofMinutes(15);
 
-    private final Path stateFile;
-    private final ObjectMapper objectMapper;
-    private final LinkedHashSet<String> processed = new LinkedHashSet<>();
-    // 진행 중인 키. 디스크에 영속하지 않음 — 프로세스 종료 시 소실되어야 데드락이 생기지 않음
-    private final Set<String> inProgress = ConcurrentHashMap.newKeySet();
+    private final PrReviewStateRepository repository;
 
-    public PrReviewStore(PrReviewProperties properties, ObjectMapper objectMapper) {
-        this.stateFile = Paths.get(properties.getStateFile());
-        this.objectMapper = objectMapper;
-    }
-
-    @PostConstruct
-    synchronized void load() {
-        if (!Files.exists(stateFile)) {
-            log.info("PR 리뷰 상태 파일 없음, 빈 상태로 시작: {}", stateFile.toAbsolutePath());
-            return;
-        }
+    // 이미 처리 완료된 키거나 다른 워커가 점유 중이면 false, 점유에 성공하면 true를 반환
+    public boolean tryClaim(String prKey) {
         try {
-            State state = objectMapper.readValue(stateFile.toFile(), State.class);
-            if (state != null && state.getReviewedPrKeys() != null) {
-                processed.addAll(state.getReviewedPrKeys());
+            repository.saveAndFlush(PrReviewState.claim(prKey, Instant.now()));
+            return true;
+        } catch (DataIntegrityViolationException e) {
+            // 이미 행이 있음 — 만료된 lease(죽은 워커의 점유)면 탈취, 아니면(진행 중/완료) 포기
+            Instant now = Instant.now();
+            boolean reclaimed = repository.reclaimExpired(prKey, now, now.minus(LEASE_TIMEOUT)) == 1;
+            if (reclaimed) {
+                log.warn("만료된 점유 탈취(lease {}분 초과): pr={}", LEASE_TIMEOUT.toMinutes(), prKey);
             }
-            log.info("PR 리뷰 상태 파일 로드 완료: {}건 ({})", processed.size(), stateFile.toAbsolutePath());
-        } catch (Exception e) {
-            log.warn("PR 리뷰 상태 파일 로드 실패, 빈 상태로 시작: {}", stateFile, e);
+            return reclaimed;
         }
     }
 
-    // 이 PR 키를 리뷰할 권리를 점유 — 성공 시 true, 이미 점유됐거나 완료면 false
-    public synchronized boolean tryClaim(String prKey) {
-        if (processed.contains(prKey)) {
-            return false;
-        }
-        return inProgress.add(prKey);
+    // 점유를 완료 상태로 전환 — 이후 같은 키의 tryClaim은 항상 false
+    public void markCompleted(String prKey) {
+        repository.complete(prKey, Instant.now());
     }
 
-    // 리뷰 완료 시 호출 — inProgress에서 빼고 processed에 추가한 뒤 즉시 영속
-    public synchronized void markCompleted(String prKey) {
-        inProgress.remove(prKey);
-        processed.add(prKey);
-        while (processed.size() > MAX_KEYS) {
-            Iterator<String> it = processed.iterator();
-            it.next();
-            it.remove();
-        }
-        save();
-    }
-
-    // 리뷰 실패 시 점유 해제 — processed에 넣지 않으므로 같은 PR 재시도 가능
-    public synchronized void release(String prKey) {
-        inProgress.remove(prKey);
-    }
-
-    // 영속 통로는 markCompleted 하나로 한정 — 패키지 밖에서 직접 호출하지 못하게 package-private 유지
-    synchronized void save() {
-        try {
-            Path tmp = stateFile.resolveSibling(stateFile.getFileName() + ".tmp");
-            objectMapper.writeValue(tmp.toFile(), new State(new ArrayList<>(processed)));
-            Files.move(tmp, stateFile, StandardCopyOption.REPLACE_EXISTING);
-        } catch (Exception e) {
-            log.warn("PR 리뷰 상태 파일 저장 실패: {}", stateFile, e);
-        }
-    }
-
-    @Getter
-    @Setter
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class State {
-        private List<String> reviewedPrKeys;
+    // 리뷰 실패 시 점유 행을 삭제해 같은 키의 재시도를 허용
+    public void release(String prKey) {
+        repository.releaseClaim(prKey);
     }
 }

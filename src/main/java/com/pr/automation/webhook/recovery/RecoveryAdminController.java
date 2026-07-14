@@ -8,7 +8,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-// 수동 엔드포인트
+// 수동으로 복구/진단을 트리거할 수 있는 내부 관리용 엔드포인트
 @RestController
 @RequiredArgsConstructor
 public class RecoveryAdminController {

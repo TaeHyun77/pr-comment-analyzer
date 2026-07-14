@@ -10,8 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-// 4단계 리뷰가 사용하는 강제 제출 도구 스키마/tool_choice 옵션을 캡슐화
-// 1~3단계는 submit_findings, 최종검증 단계는 submit_review를 강제 호출합니다.
+// 4단계 리뷰가 사용하는 강제 제출 도구 스키마를 정의
 @Component
 public class PrReviewToolSpecs {
     public static final String TOOL_SUBMIT_FINDINGS = "submit_findings";

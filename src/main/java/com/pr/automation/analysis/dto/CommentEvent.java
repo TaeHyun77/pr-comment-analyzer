@@ -4,7 +4,8 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 
-// 웹훅 페이로드에서 추출한, 분석 대상이 되는 코멘트 한 건의 정보.
+// 웹훅 페이로드에서 추출한 원본 이벤트 정보
+// CommentContext의 소스가 되는 raw 데이터 (딜리버리 ID, 커밋 SHA, 코멘트 ID/작성자/URL, 답글 부모 ID 등)
 @Getter
 @Builder
 @AllArgsConstructor
@@ -37,6 +38,7 @@ public class CommentEvent {
     private final Integer originalLine; // 코멘트 작성 시점 커밋 기준 라인
     private final Long inReplyToId; // 답글인 경우 최상위 부모 코멘트 ID
 
+    // review_comment인지 여부를 판별
     public boolean isReviewComment() {
         return TYPE_REVIEW_COMMENT.equals(eventType);
     }

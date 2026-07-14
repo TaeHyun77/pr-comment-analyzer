@@ -12,9 +12,7 @@ import org.springframework.util.StringUtils;
 import java.util.List;
 
 /**
- * 4단계 리뷰의 각 단계에 투입되는 user 프롬프트를 조립합니다.
- * 1~3단계: PR 메타 + diff + 이전 단계 발견 요약
- * 4단계(최종): PR 메타 + 1~3단계 발견 상세
+ * 4단계 리뷰의 각 단계에 투입되는 사용자 프롬프트를 조립
  */
 @Component
 @RequiredArgsConstructor
@@ -46,6 +44,7 @@ public class PrReviewPromptBuilder {
         return sb.toString();
     }
 
+    // 저장소/PR 번호/제목/설명을 담은 공통 PR 정보 블록을 만듦
     private String prMeta(PrReviewEvent e) {
         return "[PR 정보]\n"
                 + "저장소: " + e.getRepoFullName() + "  PR #" + e.getPrNumber() + "\n"
@@ -53,6 +52,7 @@ public class PrReviewPromptBuilder {
                 + "설명: " + abbreviate(orDash(e.getPrBody()), PR_BODY_LIMIT) + "\n";
     }
 
+    // 변경 파일 목록을 파일별로 ### 파일명 (상태, +추가/-삭제) 헤더와 diff 코드블록으로 렌더링
     private String renderDiff(List<ChangedFile> files) {
         if (files == null || files.isEmpty()) {
             return "(변경 파일 없음)\n";
