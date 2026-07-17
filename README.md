@@ -14,7 +14,7 @@
 
 BackEnd : Spring Boot 2.7, Java 8, Gradle
 
-LLM : Groq ( 비용 이슈 .. 사용자에 따라 변경 가능 )
+LLM : Groq ( 사용자에 따라 변경 가능 )
 
 Integration : GitHub Repository Webhook & REST API
 
@@ -24,7 +24,7 @@ Notification : Slack Incoming Webhook<br><br>
 
 기존 AI 코드 리뷰 서비스들은 PR 자동 생성이나 코드 리뷰 기능을 제공하는 경우는 있었지만, PR 리뷰 코멘트에 대한 답변을 분석해주는 시스템은 찾아보기 어려웠습니다. 이에 리뷰 코멘트 분석 과정을 직접 구현했습니다.
 
-또한, PR 생성 시에는 `언어 → 프레임워크/인프라 → 도메인/보안 → 최종 검증`의 4단계 분석을 거쳐 PR을 생성하며, 생성된 분석 결과를 Slack으로 전송하여 검토할 수 있도록 하였습니다.<br><br>
+추가적으로 PR 생성 시, `언어 → 프레임워크/인프라 → 도메인/보안 → 최종 검증`의 4단계를 통해 PR을 분석하며, 이 결과를 개인 알림으로 전송하여 확일할 수 있도록 하였습니다.<br><br>
 
 1. GitHub Webhook 이벤트 수신 및 검증
     
@@ -58,10 +58,3 @@ Notification : Slack Incoming Webhook<br><br>
 **PR 리뷰 분석**
 
 [ 이미지 ] <br><br>
-
-### 개선점
----
--  AI 및 외부 API 호출 시 복구 메커니즘 부재 해결
--  분석 진행 중 같은 코멘트의 중복 분석
--  Actionable Slack 알림
--  Webhook Redelivery 복구 메커니즘 도입
