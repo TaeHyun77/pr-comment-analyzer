@@ -8,7 +8,7 @@ import com.pr.automation.analysis.agent.AgentToolSpecs;
 import com.pr.automation.analysis.dto.AnalysisResult;
 import com.pr.automation.analysis.dto.CommentContext;
 import com.pr.automation.github.RepoFileReader;
-import com.pr.automation.analysis.llm.GroqChatClient;
+import com.pr.automation.analysis.llm.LlmChatClient;
 import com.pr.automation.analysis.llm.dto.ChatMessage;
 import com.pr.automation.analysis.llm.dto.ToolCall;
 import com.pr.automation.common.error.AutomationException;
@@ -37,7 +37,7 @@ public class CommentAnalysisAgent {
     private static final String SYSTEM_AGENTIC = loadPrompt("prompts/agentic-system.md");
     private static final Pattern CODE_FENCE = Pattern.compile("```(?:json)?\\s*(.*?)```", Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
 
-    private final GroqChatClient chatClient;
+    private final LlmChatClient chatClient;
     private final AgentPromptBuilder promptBuilder;
     private final AgentToolSpecs toolSpecs;
     private final ObjectMapper objectMapper;

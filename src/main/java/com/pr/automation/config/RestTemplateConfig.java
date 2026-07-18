@@ -18,18 +18,18 @@ public class RestTemplateConfig {
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration DEFAULT_READ_TIMEOUT = Duration.ofSeconds(10);
 
-    private final GroqProperties groqProperties;
+    private final LlmProperties llmProperties;
     private final GithubProperties githubProperties;
 
     @Bean
-    public RestTemplate groqRestTemplate(RestTemplateBuilder builder) {
+    public RestTemplate llmRestTemplate(RestTemplateBuilder builder) {
         RestTemplate rt = builder
                 .setConnectTimeout(CONNECT_TIMEOUT)
-                .setReadTimeout(Duration.ofMillis(groqProperties.getReadTimeoutMs()))
+                .setReadTimeout(Duration.ofMillis(llmProperties.getReadTimeoutMs()))
                 .build();
-        rt.setUriTemplateHandler(new DefaultUriBuilderFactory(groqProperties.getBaseUrl()));
+        rt.setUriTemplateHandler(new DefaultUriBuilderFactory(llmProperties.getBaseUrl()));
         rt.getInterceptors().add((request, body, execution) -> {
-            request.getHeaders().set(HttpHeaders.AUTHORIZATION, "Bearer " + groqProperties.getApiKey());
+            request.getHeaders().set(HttpHeaders.AUTHORIZATION, "Bearer " + llmProperties.getApiKey());
             request.getHeaders().set(HttpHeaders.USER_AGENT, "pr-comment-analyzer/1.0");
             return execution.execute(request, body);
         });

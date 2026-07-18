@@ -18,7 +18,7 @@ import java.util.List;
 public class RequiredEnvValidator implements ApplicationRunner {
 
     private final GithubProperties githubProperties;
-    private final GroqProperties groqProperties;
+    private final LlmProperties llmProperties;
     private final SlackProperties slackProperties;
 
     @Override
@@ -34,7 +34,7 @@ public class RequiredEnvValidator implements ApplicationRunner {
         if (!StringUtils.hasText(githubProperties.getWebhookSecret())) {
             missing.add("GITHUB_WEBHOOK_SECRET");
         }
-        if (!StringUtils.hasText(groqProperties.getApiKey())) {
+        if (!StringUtils.hasText(llmProperties.getApiKey())) {
             missing.add("LLM_API_KEY");
         }
         if (slackProperties.isEnabled()

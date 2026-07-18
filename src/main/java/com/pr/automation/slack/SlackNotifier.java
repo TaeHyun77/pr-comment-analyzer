@@ -12,6 +12,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
+import org.springframework.web.client.HttpStatusCodeException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
@@ -21,6 +23,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
 
 // 분석 결과를 Slack Incoming Webhook으로 보냅니다. slack.enabled=false면 전송 없이 로그만 남김
 @Slf4j
@@ -30,6 +33,10 @@ public class SlackNotifier {
     private static final int TEXT_LIMIT = 2_900;
     private static final int HEADER_LIMIT = 150;
     private static final int REPLY_LIMIT = 2_700;
+    // 일시 오류 재시도 예산 — Slack 순단은 대부분 수 초 내 회복되므로 3회(백오프 1s→2s)로 잡음.
+    // 이걸로도 안 되는 실패는 호출자와 복구 사이클 몫
+    private static final int MAX_ATTEMPTS = 3;
+    private static final long INITIAL_BACKOFF_MS = 1000L;
 
     private final RestTemplate slackRestTemplate;
     private final SlackProperties slackProperties;
@@ -147,14 +154,49 @@ public class SlackNotifier {
                 "blocks", blocks);
     }
 
+    // 일시 오류(429/5xx/네트워크 순단)는 짧게 재시도해 순단만으로 호출자(분석/리뷰 파이프라인)가
+    // 실패 처리되는 것을 막는다. 소진 시 예외 — 통지 실패의 최종 처리는 호출자 몫
     private void post(Map<String, Object> payload) {
-        try {
-            String response = slackRestTemplate.postForObject(slackProperties.getWebhookUrl(), payload, String.class);
-            if (response != null && !"ok".equalsIgnoreCase(response.trim())) {
-                log.warn("Slack 응답이 ok가 아님: {}", response);
+        long backoffMillis = INITIAL_BACKOFF_MS;
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            try {
+                String response = slackRestTemplate.postForObject(slackProperties.getWebhookUrl(), payload, String.class);
+                if (response != null && !"ok".equalsIgnoreCase(response.trim())) {
+                    log.warn("Slack 응답이 ok가 아님: {}", response);
+                }
+                return;
+            } catch (HttpStatusCodeException e) {
+                if (e.getStatusCode() != HttpStatus.TOO_MANY_REQUESTS && !e.getStatusCode().is5xxServerError()) {
+                    // 잘못된 payload 등 영구 오류 — 재시도해도 결과가 같으므로 즉시 실패
+                    throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.SLACK_API_ERROR, e);
+                }
+                if (attempt == MAX_ATTEMPTS) {
+                    throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.SLACK_API_ERROR, e);
+                }
+                log.warn("Slack 전송 일시 오류({}), 재시도 {}/{}", e.getStatusCode(), attempt, MAX_ATTEMPTS);
+            } catch (ResourceAccessException e) {
+                if (attempt == MAX_ATTEMPTS) {
+                    throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.SLACK_API_ERROR, e);
+                }
+                log.warn("Slack 전송 네트워크 오류({}), 재시도 {}/{}", e.getMessage(), attempt, MAX_ATTEMPTS);
+            } catch (RestClientException e) {
+                throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.SLACK_API_ERROR, e);
             }
-        } catch (RestClientException e) {
-            throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.SLACK_API_ERROR, e);
+            if (!sleepWithFullJitter(backoffMillis)) {
+                // 인터럽트(종료 시그널) — 남은 재시도를 포기하고 실패로 처리
+                throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.SLACK_API_ERROR, "Slack 전송 재시도 중 인터럽트 발생");
+            }
+            backoffMillis *= 2;
+        }
+    }
+
+    protected boolean sleepWithFullJitter(long maxMillis) {
+        try {
+            Thread.sleep(ThreadLocalRandom.current().nextLong(maxMillis + 1));
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
         }
     }
 

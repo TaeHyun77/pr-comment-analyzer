@@ -6,7 +6,7 @@ import com.pr.automation.analysis.agent.AgentToolSpecs;
 import com.pr.automation.analysis.dto.AnalysisResult;
 import com.pr.automation.analysis.dto.CommentContext;
 import com.pr.automation.github.RepoFileReader;
-import com.pr.automation.analysis.llm.GroqChatClient;
+import com.pr.automation.analysis.llm.LlmChatClient;
 import com.pr.automation.analysis.llm.dto.ChatMessage;
 import com.pr.automation.analysis.llm.dto.FunctionCall;
 import com.pr.automation.analysis.llm.dto.ToolCall;
@@ -58,7 +58,7 @@ class CommentAnalysisAgentTest {
 
     @Test
     void parseFallback이_snake_case_JSON을_AnalysisResult로_변환한다() {
-        CommentAnalysisAgent agent = newAgent(mock(GroqChatClient.class), BUDGET);
+        CommentAnalysisAgent agent = newAgent(mock(LlmChatClient.class), BUDGET);
         String content = "```json\n"
                 + "{\n"
                 + "  \"comment_summary\": \"X로 바꾸자는 제안\",\n"
@@ -79,7 +79,7 @@ class CommentAnalysisAgentTest {
 
     @Test
     void reader가_null이면_REPO_NOT_READABLE_예외() {
-        CommentAnalysisAgent agent = newAgent(mock(GroqChatClient.class), BUDGET);
+        CommentAnalysisAgent agent = newAgent(mock(LlmChatClient.class), BUDGET);
         assertThatThrownBy(() -> agent.run(context(), null))
                 .isInstanceOf(AutomationException.class);
     }
@@ -88,7 +88,7 @@ class CommentAnalysisAgentTest {
     void maxToolIterations가_0이하면_예외() {
         PrAnalyzerProperties zero =
                 new PrAnalyzerProperties(true, 0, 6, 25000, true, 100);
-        CommentAnalysisAgent agent = newAgent(mock(GroqChatClient.class), zero);
+        CommentAnalysisAgent agent = newAgent(mock(LlmChatClient.class), zero);
 
         assertThatThrownBy(() -> agent.run(context(), new RecordingReader(Optional.of("x"))))
                 .isInstanceOf(AutomationException.class);
@@ -99,7 +99,7 @@ class CommentAnalysisAgentTest {
     @Test
     void 시나리오A_read_file_후_submit_analysis로_종료한다() {
         RecordingReader reader = new RecordingReader(Optional.of("public class Foo {}"));
-        GroqChatClient chat = mock(GroqChatClient.class);
+        LlmChatClient chat = mock(LlmChatClient.class);
         when(chat.send(any(), any(), any())).thenReturn(
                 assistantWithCall("read_file", "{\"path\":\"src/Bar.java\"}"),
                 assistantWithCall("submit_analysis",
@@ -119,7 +119,7 @@ class CommentAnalysisAgentTest {
     @Test
     void 시나리오C_파일이_없으면_도구결과로_알리고_모델이_회복한다() {
         RecordingReader reader = new RecordingReader(Optional.empty());
-        GroqChatClient chat = mock(GroqChatClient.class);
+        LlmChatClient chat = mock(LlmChatClient.class);
         when(chat.send(any(), any(), any())).thenReturn(
                 assistantWithCall("read_file", "{\"path\":\"없는파일.java\"}"),
                 assistantWithCall("submit_analysis",
@@ -137,7 +137,7 @@ class CommentAnalysisAgentTest {
     void 시나리오B_예산_내_submit_미호출시_파싱_예외() {
         PrAnalyzerProperties oneRound =
                 new PrAnalyzerProperties(true, 1, 6, 25000, true, 100);
-        GroqChatClient chat = mock(GroqChatClient.class);
+        LlmChatClient chat = mock(LlmChatClient.class);
         when(chat.send(any(), any(), any()))
                 .thenReturn(assistantWithCall("read_file", "{\"path\":\"a\"}"));
         CommentAnalysisAgent agent = newAgent(chat, oneRound);
@@ -148,7 +148,7 @@ class CommentAnalysisAgentTest {
 
     // --- 헬퍼 ---
 
-    private static CommentAnalysisAgent newAgent(GroqChatClient chat, PrAnalyzerProperties props) {
+    private static CommentAnalysisAgent newAgent(LlmChatClient chat, PrAnalyzerProperties props) {
         return new CommentAnalysisAgent(chat, new AgentPromptBuilder(props), new AgentToolSpecs(), new ObjectMapper(), props);
     }
 

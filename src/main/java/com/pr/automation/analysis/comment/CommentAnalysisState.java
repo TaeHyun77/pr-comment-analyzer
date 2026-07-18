@@ -11,6 +11,7 @@ import javax.persistence.Entity;
 import javax.persistence.EnumType;
 import javax.persistence.Enumerated;
 import javax.persistence.Id;
+import javax.persistence.Lob;
 import javax.persistence.Table;
 import java.time.Instant;
 
@@ -33,6 +34,11 @@ public class CommentAnalysisState implements Persistable<Long> {
     private Instant claimedAt;
 
     private Instant completedAt;
+
+    // ANALYZED 상태에서만 값이 있음 - 통지 실패 시 재분석 없이 이 결과로 통지만 재시도
+    // (@Lob: MySQL longtext / 테스트 H2 clob 양쪽 호환. 완료 시 null로 비움)
+    @Lob
+    private String resultJson;
 
     private CommentAnalysisState(Long commentId, Instant claimedAt) {
         this.commentId = commentId;

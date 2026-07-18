@@ -14,6 +14,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpStatusCodeException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
@@ -22,12 +24,18 @@ import java.util.Base64;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ThreadLocalRandom;
 
 // PR 코멘트/파일/디렉터리 조회, PR에 코멘트 게시 등 범용 GitHub API 호출을 담당하는 클래스
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class GithubClient {
+    // fetchPullFiles 일시 오류 재시도 예산 — GitHub 순단은 대부분 수 초 내 회복되므로 짧게 3회(백오프 1s→2s)로 잡음.
+    // 이걸로도 안 되는 실패는 복구 사이클(redelivery)이 맡음
+    private static final int FETCH_MAX_ATTEMPTS = 3;
+    private static final long FETCH_INITIAL_BACKOFF_MS = 1000L;
+
     private final RestTemplate githubRestTemplate;
     private final GithubProperties githubProperties;
 
@@ -151,36 +159,75 @@ public class GithubClient {
 
     // PR에서 변경된 파일 목록을 100개까지 조회합니다.
     // CommentAnalysisService.fetchFilePatch가 특정 파일의 전체 diff를 찾을 때, 그리고 PrReviewService가 리뷰 대상 diff 전체를 가져올 때 사용
-    public List<ChangedFile> fetchPullFiles(String repoFullName, int prNumber) {
-        if (!isEnabled()) return Collections.emptyList();
+    //
+    // 실패(empty)와 정상적인 빈 결과(빈 리스트)를 구분해 반환합니다 — PR 리뷰 경로는 empty를 실패로 해석해
+    // 복구 사이클로 넘기므로, 여기서 실패를 빈 리스트로 뭉개면 리뷰가 완료로 봉인됩니다.
+    // 일시 오류(429/5xx/네트워크 순단)는 내부에서 짧게 재시도해 redelivery(분 단위 대기 + 포이즌 예산 소모) 없이 흡수합니다.
+    public Optional<List<ChangedFile>> fetchPullFiles(String repoFullName, int prNumber) {
+        if (!isEnabled()) return Optional.empty();
 
         String[] parts = splitRepo(repoFullName);
         if (parts == null) {
+            return Optional.empty();
+        }
+
+        long backoffMillis = FETCH_INITIAL_BACKOFF_MS;
+        for (int attempt = 1; attempt <= FETCH_MAX_ATTEMPTS; attempt++) {
+            try {
+                GhPullFile[] files = githubRestTemplate.getForObject(
+                        "/repos/{owner}/{repo}/pulls/{number}/files?per_page=100",
+                        GhPullFile[].class,
+                        parts[0], parts[1], prNumber);
+                return Optional.of(toChangedFiles(files));
+            } catch (HttpStatusCodeException e) {
+                if (e.getStatusCode() != HttpStatus.TOO_MANY_REQUESTS && !e.getStatusCode().is5xxServerError()) {
+                    // 404 등 영구 오류 — 재시도해도 결과가 같으므로 즉시 실패
+                    log.warn("GitHub PR 변경 파일 조회 실패({}): {} #{}", e.getStatusCode(), repoFullName, prNumber);
+                    return Optional.empty();
+                }
+                log.warn("GitHub PR 변경 파일 조회 일시 오류({}), 재시도 {}/{}: {} #{}",
+                        e.getStatusCode(), attempt, FETCH_MAX_ATTEMPTS, repoFullName, prNumber);
+            } catch (ResourceAccessException e) {
+                log.warn("GitHub PR 변경 파일 조회 네트워크 오류({}), 재시도 {}/{}: {} #{}",
+                        e.getMessage(), attempt, FETCH_MAX_ATTEMPTS, repoFullName, prNumber);
+            } catch (Exception e) {
+                log.warn("GitHub PR 변경 파일 조회 실패: {} #{}", repoFullName, prNumber, e);
+                return Optional.empty();
+            }
+            if (attempt == FETCH_MAX_ATTEMPTS || !sleepWithFullJitter(backoffMillis)) {
+                return Optional.empty();
+            }
+            backoffMillis *= 2;
+        }
+        return Optional.empty();
+    }
+
+    private static List<ChangedFile> toChangedFiles(GhPullFile[] files) {
+        if (files == null) {
             return Collections.emptyList();
         }
+        List<ChangedFile> out = new java.util.ArrayList<>(files.length);
+        for (GhPullFile f : files) {
+            out.add(ChangedFile.builder()
+                    .filename(f.getFilename())
+                    .status(f.getStatus())
+                    .patch(f.getPatch())
+                    .additions(f.getAdditions() != null ? f.getAdditions() : 0)
+                    .deletions(f.getDeletions() != null ? f.getDeletions() : 0)
+                    .build()
+            );
+        }
+        return out;
+    }
+
+    // 인터럽트(종료 시그널) 시 false를 반환해 남은 재시도를 중단시킵니다 — 조회 계층은 예외를 던지지 않는다는 규약 유지
+    protected boolean sleepWithFullJitter(long maxMillis) {
         try {
-            GhPullFile[] files = githubRestTemplate.getForObject(
-                    "/repos/{owner}/{repo}/pulls/{number}/files?per_page=100",
-                    GhPullFile[].class,
-                    parts[0], parts[1], prNumber);
-            if (files == null) {
-                return Collections.emptyList();
-            }
-            List<ChangedFile> out = new java.util.ArrayList<>(files.length);
-            for (GhPullFile f : files) {
-                out.add(ChangedFile.builder()
-                        .filename(f.getFilename())
-                        .status(f.getStatus())
-                        .patch(f.getPatch())
-                        .additions(f.getAdditions() != null ? f.getAdditions() : 0)
-                        .deletions(f.getDeletions() != null ? f.getDeletions() : 0)
-                        .build()
-                );
-            }
-            return out;
-        } catch (Exception e) {
-            log.warn("GitHub PR 변경 파일 조회 실패: {} #{}", repoFullName, prNumber, e);
-            return Collections.emptyList();
+            Thread.sleep(ThreadLocalRandom.current().nextLong(maxMillis + 1));
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
         }
     }
 

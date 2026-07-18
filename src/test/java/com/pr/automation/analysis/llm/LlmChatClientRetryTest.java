@@ -6,7 +6,7 @@ import com.pr.automation.analysis.llm.dto.Choice;
 import com.pr.automation.analysis.llm.dto.Tool;
 import com.pr.automation.common.error.AutomationException;
 import com.pr.automation.common.error.ErrorCode;
-import com.pr.automation.config.GroqProperties;
+import com.pr.automation.config.LlmProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -36,22 +36,22 @@ import static org.mockito.Mockito.when;
  * 재시도/예외 분류 동작 검증.
  * 실제 sleep 시간을 없애기 위해 sleepWithFullJitter를 no-op으로 오버라이드한 서브클래스 사용.
  */
-class GroqChatClientRetryTest {
+class LlmChatClientRetryTest {
 
     private static final List<ChatMessage> MESSAGES = Collections.singletonList(ChatMessage.user("hi"));
     private static final List<Tool> TOOLS = Collections.emptyList();
     private static final Object CHOICE = "auto";
 
     private RestTemplate restTemplate;
-    private TestGroqChatClient client;
+    private TestLlmChatClient client;
     private AtomicInteger sleepCount;
 
     @BeforeEach
     void setUp() {
         restTemplate = mock(RestTemplate.class);
         sleepCount = new AtomicInteger();
-        GroqProperties props = new GroqProperties("key", "http://localhost", "model", 2048, 0.3, 60000, 3);
-        client = new TestGroqChatClient(restTemplate, props, sleepCount);
+        LlmProperties props = new LlmProperties("key", "http://localhost", "model", 2048, 0.3, 60000, 3);
+        client = new TestLlmChatClient(restTemplate, props, sleepCount);
     }
 
     @Test
@@ -106,7 +106,7 @@ class GroqChatClientRetryTest {
 
         assertThatThrownBy(() -> client.send(MESSAGES, TOOLS, CHOICE))
                 .isInstanceOf(AutomationException.class)
-                .hasMessageContaining("Groq API 클라이언트 오류")
+                .hasMessageContaining("LLM API 클라이언트 오류")
                 .hasMessageContaining("401");
 
         verify(restTemplate, times(1)).postForObject(anyString(), any(), eq(ChatResponse.class));
@@ -174,10 +174,10 @@ class GroqChatClientRetryTest {
     /**
      * sleep을 no-op으로 만들어 테스트 시간을 단축. 실제 호출 횟수만 카운트.
      */
-    private static class TestGroqChatClient extends GroqChatClient {
+    private static class TestLlmChatClient extends LlmChatClient {
         private final AtomicInteger counter;
 
-        TestGroqChatClient(RestTemplate rt, GroqProperties props, AtomicInteger counter) {
+        TestLlmChatClient(RestTemplate rt, LlmProperties props, AtomicInteger counter) {
             super(rt, props);
             this.counter = counter;
         }
