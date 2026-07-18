@@ -22,6 +22,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -62,7 +63,8 @@ class CommentAnalysisServiceTest {
         store = mock(CommentStore.class);
         deliveryStore = mock(DeliveryStore.class);
         when(githubClient.isEnabled()).thenReturn(true);
-        service = new CommentAnalysisService(githubClient, analysisAgent, slackNotifier, store, deliveryStore);
+        service = new CommentAnalysisService(githubClient, analysisAgent, slackNotifier, store, deliveryStore,
+                new com.fasterxml.jackson.databind.ObjectMapper());
     }
 
     @Test
@@ -116,9 +118,9 @@ class CommentAnalysisServiceTest {
         when(store.tryClaim(555L)).thenReturn(true);
         when(analysisAgent.run(any(CommentContext.class), any())).thenReturn(result);
         String fooPatch = "@@ -1,3 +1,4 @@\n+x\n@@ -50,2 +51,3 @@\n+y";
-        when(githubClient.fetchPullFiles("me/repo", 7)).thenReturn(Arrays.asList(
+        when(githubClient.fetchPullFiles("me/repo", 7)).thenReturn(Optional.of(Arrays.asList(
                 GithubClient.ChangedFile.builder().filename("src/Bar.java").status("modified").patch("@@ bar @@").additions(1).deletions(0).build(),
-                GithubClient.ChangedFile.builder().filename("src/Foo.java").status("modified").patch(fooPatch).additions(2).deletions(0).build()));
+                GithubClient.ChangedFile.builder().filename("src/Foo.java").status("modified").patch(fooPatch).additions(2).deletions(0).build())));
 
         service.analyzeAsync(EVENT);
 
@@ -132,8 +134,8 @@ class CommentAnalysisServiceTest {
         AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변");
         when(store.tryClaim(555L)).thenReturn(true);
         when(analysisAgent.run(any(CommentContext.class), any())).thenReturn(result);
-        when(githubClient.fetchPullFiles("me/repo", 7)).thenReturn(Arrays.asList(
-                GithubClient.ChangedFile.builder().filename("src/Other.java").status("modified").patch("@@ other @@").additions(1).deletions(0).build()));
+        when(githubClient.fetchPullFiles("me/repo", 7)).thenReturn(Optional.of(Arrays.asList(
+                GithubClient.ChangedFile.builder().filename("src/Other.java").status("modified").patch("@@ other @@").additions(1).deletions(0).build())));
 
         service.analyzeAsync(EVENT);
 
@@ -142,6 +144,69 @@ class CommentAnalysisServiceTest {
         assertThat(captor.getValue().getFilePatch()).isNull();
         verify(slackNotifier).send(eq(EVENT), eq(result));
         verify(store).markCompleted(555L);
+    }
+
+    @Test
+    void 분석성공후_Slack실패시_결과를_저장하고_완료처리는_하지_않는다() {
+        AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변");
+        when(store.tryClaim(555L)).thenReturn(true);
+        when(analysisAgent.run(any(CommentContext.class), any())).thenReturn(result);
+        doThrow(new RuntimeException("slack down")).when(slackNotifier).send(any(), any());
+
+        service.analyzeAsync(EVENT);
+
+        // markAnalyzed가 send보다 먼저 호출되어 결과가 저장돼 있어야 함 — 재전송 시 통지만 재시도 가능
+        verify(store).markAnalyzed(eq(555L), anyString());
+        verify(store, never()).markCompleted(anyLong());
+        verify(deliveryStore, never()).markReceived(any());
+        verify(slackNotifier).sendFailure(eq(EVENT), any());
+    }
+
+    @Test
+    void 저장된_분석결과가_있으면_LLM없이_통지만_재시도한다() throws Exception {
+        AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변");
+        String savedJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(result);
+        when(store.tryClaim(555L)).thenReturn(true);
+        when(store.findAnalyzedResult(555L)).thenReturn(Optional.of(savedJson));
+
+        service.analyzeAsync(EVENT);
+
+        verify(analysisAgent, never()).run(any(), any());
+        verify(slackNotifier).send(eq(EVENT), any(AnalysisResult.class));
+        verify(store).markCompleted(555L);
+        verify(deliveryStore).markReceived("delivery-555");
+    }
+
+    @Test
+    void 저장된_결과가_깨졌으면_신규_분석을_수행한다() {
+        AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변");
+        when(store.tryClaim(555L)).thenReturn(true);
+        when(store.findAnalyzedResult(555L)).thenReturn(Optional.of("{깨진 json"));
+        when(analysisAgent.run(any(CommentContext.class), any())).thenReturn(result);
+
+        service.analyzeAsync(EVENT);
+
+        verify(analysisAgent).run(any(CommentContext.class), any());
+        verify(store).markAnalyzed(eq(555L), anyString());
+        verify(store).markCompleted(555L);
+    }
+
+    @Test
+    void 변경파일_조회가_실패해도_filePatch_없이_분석은_계속된다() {
+        // patch는 보조 맥락이므로 조회 실패(empty)를 실패로 승격하지 않음 — PR 리뷰 경로와 다른 점
+        AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변");
+        when(store.tryClaim(555L)).thenReturn(true);
+        when(analysisAgent.run(any(CommentContext.class), any())).thenReturn(result);
+        when(githubClient.fetchPullFiles("me/repo", 7)).thenReturn(Optional.empty());
+
+        service.analyzeAsync(EVENT);
+
+        ArgumentCaptor<CommentContext> captor = ArgumentCaptor.forClass(CommentContext.class);
+        verify(analysisAgent).run(captor.capture(), any());
+        assertThat(captor.getValue().getFilePatch()).isNull();
+        verify(slackNotifier).send(eq(EVENT), eq(result));
+        verify(store).markCompleted(555L);
+        verify(store, never()).release(anyLong());
     }
 
     @Test

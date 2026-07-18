@@ -97,6 +97,60 @@ class CommentStoreTest {
         assertThat(store.tryClaim(70L)).isFalse();
     }
 
+    @Test
+    void markAnalyzed는_결과를_저장하고_상태를_ANALYZED로_바꾼다() {
+        assertThat(store.tryClaim(80L)).isTrue();
+        store.markAnalyzed(80L, "{\"verdict\":\"ok\"}");
+
+        assertThat(store.findAnalyzedResult(80L)).hasValue("{\"verdict\":\"ok\"}");
+        assertThat(repository.findById(80L))
+                .hasValueSatisfying(s -> assertThat(s.getStatus()).isEqualTo(WorkStatus.ANALYZED));
+    }
+
+    @Test
+    void ANALYZED_행은_lease_만료전_탈취불가_만료후_탈취시_결과가_보존된다() {
+        assertThat(store.tryClaim(81L)).isTrue();
+        store.markAnalyzed(81L, "{\"verdict\":\"ok\"}");
+
+        // 통지 재시도 중인 워커의 점유는 뺏지 못함
+        assertThat(store.tryClaim(81L)).isFalse();
+
+        expireLease(81L);
+        assertThat(store.tryClaim(81L)).isTrue();
+        // 탈취해도 저장된 결과는 그대로 — 통지만 재시도 가능
+        assertThat(store.findAnalyzedResult(81L)).hasValue("{\"verdict\":\"ok\"}");
+    }
+
+    @Test
+    void release는_ANALYZED_행을_지우지_않는다() {
+        assertThat(store.tryClaim(82L)).isTrue();
+        store.markAnalyzed(82L, "{\"verdict\":\"ok\"}");
+        store.release(82L); // 통지 실패 경로의 catch에서 무조건 호출됨 — ANALYZED는 보존돼야 함
+
+        assertThat(store.findAnalyzedResult(82L)).hasValue("{\"verdict\":\"ok\"}");
+    }
+
+    @Test
+    void markCompleted는_결과를_비우고_이후_결과조회는_empty다() {
+        assertThat(store.tryClaim(83L)).isTrue();
+        store.markAnalyzed(83L, "{\"verdict\":\"ok\"}");
+        store.markCompleted(83L);
+
+        assertThat(store.findAnalyzedResult(83L)).isEmpty();
+        assertThat(repository.findById(83L))
+                .hasValueSatisfying(s -> {
+                    assertThat(s.getStatus()).isEqualTo(WorkStatus.COMPLETED);
+                    assertThat(s.getResultJson()).isNull();
+                });
+    }
+
+    @Test
+    void IN_PROGRESS_행의_결과조회는_empty다() {
+        assertThat(store.tryClaim(84L)).isTrue();
+
+        assertThat(store.findAnalyzedResult(84L)).isEmpty();
+    }
+
     // claimed_at을 lease 만료 이전 시각으로 되돌려 죽은 워커의 점유를 흉내낸다
     // Hibernate가 hibernate.jdbc.time_zone=UTC로 저장하므로, JDBC 직접 쓰기도 UTC 벽시계로 맞춘다
     private void expireLease(long commentId) {

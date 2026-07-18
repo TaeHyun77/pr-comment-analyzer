@@ -9,18 +9,30 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 
 public interface CommentAnalysisStateRepository extends JpaRepository<CommentAnalysisState, Long> {
-    // 만료된 IN_PROGRESS 점유(죽은 워커)를 탈취하고 claimed_at을 갱신
+    // 만료된 IN_PROGRESS/ANALYZED 점유(죽은 워커)를 탈취하고 claimed_at을 갱신
     // WHERE 조건 + 영향 행 수 확인으로 원자성 보장 - 동시에 시도해도 성공하는 워커는 하나뿐
+    // ANALYZED의 resultJson은 건드리지 않아 탈취한 워커가 저장된 결과로 통지만 재시도할 수 있음
     @Transactional
     @Modifying
     @Query("update CommentAnalysisState s set s.claimedAt = :now "
-            + "where s.commentId = :commentId and s.status = com.pr.automation.common.entity.WorkStatus.IN_PROGRESS "
+            + "where s.commentId = :commentId "
+            + "and s.status <> com.pr.automation.common.entity.WorkStatus.COMPLETED "
             + "and s.claimedAt < :expiredBefore")
     int reclaimExpired(@Param("commentId") long commentId, @Param("now") Instant now, @Param("expiredBefore") Instant expiredBefore);
 
+    // 분석 결과를 저장하고 통지 대기 상태로 전환. claimed_at도 갱신해 통지 단계가 새 lease를 온전히 갖게 함
     @Transactional
     @Modifying
-    @Query("update CommentAnalysisState s set s.status = com.pr.automation.common.entity.WorkStatus.COMPLETED, s.completedAt = :now "
+    @Query("update CommentAnalysisState s set s.status = com.pr.automation.common.entity.WorkStatus.ANALYZED, "
+            + "s.resultJson = :resultJson, s.claimedAt = :now "
+            + "where s.commentId = :commentId")
+    int markAnalyzed(@Param("commentId") long commentId, @Param("resultJson") String resultJson, @Param("now") Instant now);
+
+    // 완료 시 resultJson을 비움 - 결과는 통지 재시도용이므로 완료 후 보관하지 않음
+    @Transactional
+    @Modifying
+    @Query("update CommentAnalysisState s set s.status = com.pr.automation.common.entity.WorkStatus.COMPLETED, "
+            + "s.completedAt = :now, s.resultJson = null "
             + "where s.commentId = :commentId")
     int complete(@Param("commentId") long commentId, @Param("now") Instant now);
 

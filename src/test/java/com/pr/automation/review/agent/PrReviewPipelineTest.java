@@ -1,7 +1,7 @@
 package com.pr.automation.review.agent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.pr.automation.analysis.llm.GroqChatClient;
+import com.pr.automation.analysis.llm.LlmChatClient;
 import com.pr.automation.analysis.llm.dto.ChatMessage;
 import com.pr.automation.analysis.llm.dto.FunctionCall;
 import com.pr.automation.analysis.llm.dto.ToolCall;
@@ -43,7 +43,7 @@ class PrReviewPipelineTest {
 
     @Test
     void 네_단계를_순서대로_호출하고_최종결과를_종합한다() {
-        GroqChatClient chat = mock(GroqChatClient.class);
+        LlmChatClient chat = mock(LlmChatClient.class);
         when(chat.send(any(), any(), any())).thenReturn(
                 findings("[{\"file\":\"src/Foo.java\",\"line\":3,\"severity\":\"높음\",\"category\":\"null-safety\","
                         + "\"title\":\"NPE 위험\",\"detail\":\"널 역참조\",\"suggestion\":\"널 체크\"}]", "언어 총평"),
@@ -67,7 +67,7 @@ class PrReviewPipelineTest {
 
     @Test
     void 발견이_없어도_최종결과를_반환한다() {
-        GroqChatClient chat = mock(GroqChatClient.class);
+        LlmChatClient chat = mock(LlmChatClient.class);
         when(chat.send(any(), any(), any())).thenReturn(
                 findings("[]", "이슈 없음"),
                 findings("[]", "이슈 없음"),
@@ -83,7 +83,7 @@ class PrReviewPipelineTest {
 
     @Test
     void 단계_프롬프트에_diff가_포함된다() {
-        GroqChatClient chat = mock(GroqChatClient.class);
+        LlmChatClient chat = mock(LlmChatClient.class);
         when(chat.send(any(), any(), any())).thenReturn(
                 findings("[]", "s"), findings("[]", "s"), findings("[]", "s"), emptyReview());
         PrReviewPipeline pipeline = newPipeline(chat);
@@ -99,7 +99,7 @@ class PrReviewPipelineTest {
 
     // --- 헬퍼 ---
 
-    private static PrReviewPipeline newPipeline(GroqChatClient chat) {
+    private static PrReviewPipeline newPipeline(LlmChatClient chat) {
         return new PrReviewPipeline(chat, new PrReviewPromptBuilder(PROPS), new PrReviewToolSpecs(), new ObjectMapper());
     }
 

@@ -1,5 +1,6 @@
 package com.pr.automation.analysis.comment;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pr.automation.analysis.dto.AnalysisResult;
 import com.pr.automation.analysis.dto.CommentContext;
 import com.pr.automation.analysis.dto.CommentEvent;
@@ -31,10 +32,11 @@ public class CommentAnalysisService {
     private final SlackNotifier slackNotifier;
     private final CommentStore commentStore;
     private final DeliveryStore deliveryStore;
+    private final ObjectMapper objectMapper;
 
     // 중복 코멘트는 건너뛰고, 실패는 로그 + Slack 알림으로만 처리
-    // 실패 시에도 Slack에 실패 알림 발송
-    // deliveryStore.markReceived는 분석 성공 시점에만 호출 — 실패 시 호출하지 않아 recoverer가 재전송할 수 있게 함
+    // deliveryStore.markReceived는 성공 시점에만 호출 — 실패 시 호출하지 않아 recoverer가 재전송할 수 있게 함
+    // 분석 성공 후 통지만 실패한 경우 결과가 ANALYZED 행에 남아, 재전송 시 LLM 없이 통지만 재시도됨
     @Async(AsyncConfig.ANALYSIS_EXECUTOR)
     public void analyzeAsync(CommentEvent event) {
 
@@ -46,29 +48,54 @@ public class CommentAnalysisService {
         }
 
         try {
-            AnalysisResult result = analyze(event);
+            AnalysisResult result = loadSavedResult(event.getCommentId());
+            if (result != null) {
+                log.info("저장된 분석 결과 재사용 — 통지만 재시도: {} comment={}", event.getRepoFullName(), event.getCommentId());
+            } else {
+                result = analysisAgent.run(buildContext(event), repoFileReader(event));
+                // send 전에 자체 트랜잭션으로 즉시 커밋됨(서비스에 @Transactional 없음이 전제)
+                // — 이후 통지가 실패해도 결과가 보존되어 재분석을 막는다
+                commentStore.markAnalyzed(event.getCommentId(), serializeResult(result));
+            }
+
+            slackNotifier.send(event, result);
             commentStore.markCompleted(event.getCommentId());
             deliveryStore.markReceived(event.getDeliveryId());
 
             log.info("코멘트 분석 완료: {} #{} comment={} verdict='{}'", event.getRepoFullName(), event.getPrNumber(), event.getCommentId(), result.getVerdict());
         } catch (Exception e) {
-            // 실패 시 점유 해제 - 같은 commentId의 재시도를 가능하게 함
+            // 점유 해제 - releaseClaim이 IN_PROGRESS만 삭제하므로 ANALYZED(통지만 실패)는 자동 보존됨
             commentStore.release(event.getCommentId());
 
-            // deliveryStore.markReceived 호출하지 않음 — 다음 부팅 시 recoverer가 재전송 트리거
+            // deliveryStore.markReceived 호출하지 않음 — 다음 복구 사이클이 재전송 트리거
             log.error("코멘트 분석 실패: {} #{} comment={}", event.getRepoFullName(), event.getPrNumber(), event.getCommentId(), e);
 
             slackNotifier.sendFailure(event, e);
         }
     }
 
-    // AI 분석 + Slack 알림
-    public AnalysisResult analyze(CommentEvent event) {
-        CommentContext context = buildContext(event);
-        AnalysisResult result = analysisAgent.run(context, repoFileReader(event));
-        slackNotifier.send(event, result);
+    // ANALYZED 행(이전 시도에서 분석은 성공, 통지만 실패)의 저장 결과를 복원. 없거나 깨졌으면 null → 신규 분석
+    private AnalysisResult loadSavedResult(long commentId) {
+        String json = commentStore.findAnalyzedResult(commentId).orElse(null);
+        if (json == null) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(json, AnalysisResult.class);
+        } catch (Exception e) {
+            log.warn("저장된 분석 결과 역직렬화 실패, 신규 분석으로 진행: comment={}", commentId, e);
+            return null;
+        }
+    }
 
-        return result;
+    // 직렬화 실패 시 null 저장(통지 실패 시 재분석으로 후퇴) — 영속화는 비용 절감용 최적화이므로 분석 성공을 실패로 만들지 않음
+    private String serializeResult(AnalysisResult result) {
+        try {
+            return objectMapper.writeValueAsString(result);
+        } catch (Exception e) {
+            log.warn("분석 결과 직렬화 실패 — 통지 실패 시 재분석됨", e);
+            return null;
+        }
     }
 
     // 자율 파일 탐색용 RepoFileReader 구현체( GithubRepoFileReader )를 생성합니다.
@@ -131,9 +158,11 @@ public class CommentAnalysisService {
             return null;
         }
 
-        String patch = githubClient.fetchPullFiles(e.getRepoFullName(), e.getPrNumber()).stream()
-                .filter(f -> e.getFilePath().equals(f.getFilename()))
-                .findFirst()
+        // 조회 실패(empty)와 미발견 모두 null — patch는 보조 맥락이므로 실패를 삼키고 분석을 계속함 (PR 리뷰 경로와 다른 기준)
+        String patch = githubClient.fetchPullFiles(e.getRepoFullName(), e.getPrNumber())
+                .flatMap(files -> files.stream()
+                        .filter(f -> e.getFilePath().equals(f.getFilename()))
+                        .findFirst())
                 .map(GithubClient.ChangedFile::getPatch)
                 .orElse(null);
 

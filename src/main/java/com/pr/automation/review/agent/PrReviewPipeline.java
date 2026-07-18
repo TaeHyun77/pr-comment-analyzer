@@ -2,7 +2,7 @@ package com.pr.automation.review.agent;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.pr.automation.analysis.llm.GroqChatClient;
+import com.pr.automation.analysis.llm.LlmChatClient;
 import com.pr.automation.analysis.llm.dto.ChatMessage;
 import com.pr.automation.analysis.llm.dto.ToolCall;
 import com.pr.automation.common.error.AutomationException;
@@ -45,7 +45,7 @@ public class PrReviewPipeline {
     private static final String SYSTEM_DOMAIN_SECURITY = loadPrompt("prompts/pr-review-domain-security.md");
     private static final String SYSTEM_FINAL = loadPrompt("prompts/pr-review-final.md");
 
-    private final GroqChatClient chatClient;
+    private final LlmChatClient chatClient;
     private final PrReviewPromptBuilder promptBuilder;
     private final PrReviewToolSpecs toolSpecs;
     private final ObjectMapper objectMapper;

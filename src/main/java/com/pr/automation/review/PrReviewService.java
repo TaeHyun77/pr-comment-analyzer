@@ -63,9 +63,12 @@ public class PrReviewService {
             throw new AutomationException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.REPO_NOT_READABLE, "GitHub 토큰 미설정으로 PR 리뷰 불가");
         }
 
-        List<ChangedFile> files = githubClient.fetchPullFiles(event.getRepoFullName(), event.getPrNumber());
+        // 조회 실패는 "변경 없음"과 달리 예외로 전환 — 완료로 봉인되지 않고 복구 사이클(redelivery)이 재시도하게 함
+        List<ChangedFile> files = githubClient.fetchPullFiles(event.getRepoFullName(), event.getPrNumber())
+                .orElseThrow(() -> new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR,
+                        "PR 변경 파일 조회 실패: " + event.getRepoFullName() + " #" + event.getPrNumber()));
         if (files.isEmpty()) {
-            log.info("변경 파일 없음(또는 조회 실패) — PR 리뷰 생략: {} #{}", event.getRepoFullName(), event.getPrNumber());
+            log.info("변경 파일 없음 — PR 리뷰 생략: {} #{}", event.getRepoFullName(), event.getPrNumber());
             return;
         }
 
@@ -74,8 +77,14 @@ public class PrReviewService {
         String body = formatter.format(result);
         githubClient.createIssueComment(event.getRepoFullName(), event.getPrNumber(), body);
 
+        // 보조 채널 실패는 삼킴 — 본질 산출물(PR 코멘트)은 이미 게시됐으므로,
+        // 여기서 실패를 전파하면 재실행 시 LLM 재호출 + 중복 코멘트 게시라는 더 큰 부작용이 생김
         if (properties.isPostToSlack()) {
-            slackNotifier.sendPrReview(event, result);
+            try {
+                slackNotifier.sendPrReview(event, result);
+            } catch (Exception e) {
+                log.warn("PR 리뷰 보조 Slack 전송 실패(리뷰는 완료 처리): {} #{}", event.getRepoFullName(), event.getPrNumber(), e);
+            }
         }
     }
 }

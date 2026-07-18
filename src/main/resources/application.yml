@@ -4,7 +4,7 @@ spring:
   jackson:
     default-property-inclusion: non_null
   datasource:
-    # 기본값은 docker compose mysql의 호스트 노출 포트(13306) — 로컬 bootRun 시 compose mysql만 띄우면 됨
+    # 인프라 값은 기본값 유지. 로컬 bootRun 시 compose mysql(13306)만 띄우면 됨
     url: ${DB_URL:jdbc:mysql://localhost:13306/automation?serverTimezone=UTC&characterEncoding=UTF-8}
     username: ${DB_USERNAME:automation}
     password: ${DB_PASSWORD:automation}
@@ -20,11 +20,12 @@ spring:
 server:
   port: ${SERVER_PORT:8080}
 
+# 앱 설정 변수는 기본값 없이 env로만 주입 (누락 시 부팅 실패) — 값은 .env / .env.example 참조
 github:
-  token: ${GITHUB_TOKEN:}
-  login: ${GITHUB_LOGIN:}
-  webhook-secret: ${GITHUB_WEBHOOK_SECRET:}
-  repos: ${GITHUB_REPOS:}
+  token: ${GITHUB_TOKEN}
+  login: ${GITHUB_LOGIN}
+  webhook-secret: ${GITHUB_WEBHOOK_SECRET}
+  repos: ${GITHUB_REPOS}
   webhook-recovery:
     enabled: ${GITHUB_WEBHOOK_RECOVERY_ENABLED:true}
     lookback-hours: ${GITHUB_WEBHOOK_RECOVERY_LOOKBACK_HOURS:24}
@@ -32,32 +33,32 @@ github:
     scheduler-interval-ms: ${GITHUB_WEBHOOK_RECOVERY_SCHEDULER_INTERVAL_MS:1800000}
     scheduler-lookback-hours: ${GITHUB_WEBHOOK_RECOVERY_SCHEDULER_LOOKBACK_HOURS:1}
 
-groq:
-  api-key: ${LLM_API_KEY:}
-  base-url: ${LLM_BASE_URL:https://api.groq.com/openai/v1}
-  model: ${LLM_MODEL:llama-3.3-70b-versatile}
-  max-tokens: ${LLM_MAX_TOKENS:2048}
-  temperature: ${LLM_TEMPERATURE:0.3}
-  read-timeout-ms: ${LLM_READ_TIMEOUT_MS:60000}
-  max-attempts: ${LLM_MAX_ATTEMPTS:3}
+llm:
+  api-key: ${LLM_API_KEY}
+  base-url: ${LLM_BASE_URL}
+  model: ${LLM_MODEL}
+  max-tokens: ${LLM_MAX_TOKENS}
+  temperature: ${LLM_TEMPERATURE}
+  read-timeout-ms: ${LLM_READ_TIMEOUT_MS}
+  max-attempts: ${LLM_MAX_ATTEMPTS}
 
 slack:
-  enabled: ${SLACK_ENABLED:true}
-  webhook-url: ${SLACK_WEBHOOK_URL:}
+  enabled: ${SLACK_ENABLED}
+  webhook-url: ${SLACK_WEBHOOK_URL}
 
 pr-analyzer:
-  enabled: ${PR_ANALYZER_ENABLED:true}
-  include-own-comments: ${PR_ANALYZER_INCLUDE_OWN_COMMENTS:true}
-  max-tool-iterations: ${PR_ANALYZER_MAX_TOOL_ITERATIONS:8}
-  max-files: ${PR_ANALYZER_MAX_FILES:6}
-  max-file-chars: ${PR_ANALYZER_MAX_FILE_CHARS:25000}
-  max-dir-entries: ${PR_ANALYZER_MAX_DIR_ENTRIES:100}
+  enabled: ${PR_ANALYZER_ENABLED}
+  include-own-comments: ${PR_ANALYZER_INCLUDE_OWN_COMMENTS}
+  max-tool-iterations: ${PR_ANALYZER_MAX_TOOL_ITERATIONS}
+  max-files: ${PR_ANALYZER_MAX_FILES}
+  max-file-chars: ${PR_ANALYZER_MAX_FILE_CHARS}
+  max-dir-entries: ${PR_ANALYZER_MAX_DIR_ENTRIES}
 
 pr-review:
-  enabled: ${PR_REVIEW_ENABLED:true}
-  max-files: ${PR_REVIEW_MAX_FILES:50}
-  max-patch-chars: ${PR_REVIEW_MAX_PATCH_CHARS:6000}
-  post-to-slack: ${PR_REVIEW_POST_TO_SLACK:false}
+  enabled: ${PR_REVIEW_ENABLED}
+  max-files: ${PR_REVIEW_MAX_FILES}
+  max-patch-chars: ${PR_REVIEW_MAX_PATCH_CHARS}
+  post-to-slack: ${PR_REVIEW_POST_TO_SLACK}
 
 logging:
   level:
