@@ -24,6 +24,8 @@ public class GithubProperties {
     private final String webhookSecret;
     private final List<String> repos;
     private final WebhookRecovery webhookRecovery;
+    private final int fetchMaxAttempts;  // GitHub 조회 일시 오류 재시도 횟수 (LLM_MAX_ATTEMPTS와 동일 클래스)
+    private final int readTimeoutMs;     // GitHub API 응답 대기 시간(ms)
 
     @Getter
     @AllArgsConstructor
@@ -34,5 +36,6 @@ public class GithubProperties {
         private final boolean schedulerEnabled;
         private final long schedulerIntervalMs;
         private final int schedulerLookbackHours; // 현재 시각으로부터 몇 시간 전까지의 deliveries를 복구 대상으로 볼지
+        private final int maxRedeliverAttempts;   // 같은 delivery 재전송 트리거 상한 — 초과 시 포이즌으로 간주하고 복구 포기
     }
 }

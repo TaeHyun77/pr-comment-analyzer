@@ -14,12 +14,12 @@ import java.time.Duration;
 @Configuration
 @RequiredArgsConstructor
 public class RestTemplateConfig {
-    // 외부 API 무한 대기 방지용 타임아웃. LLM read 타임아웃은 모델별 지연 편차가 커 env(LLM_READ_TIMEOUT_MS)로 분리
+    // 외부 API 무한 대기 방지용 connect 타임아웃(공통). read 타임아웃은 대상별 지연 편차가 커 각 env로 분리
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
-    private static final Duration DEFAULT_READ_TIMEOUT = Duration.ofSeconds(10);
 
     private final LlmProperties llmProperties;
     private final GithubProperties githubProperties;
+    private final SlackProperties slackProperties;
 
     @Bean
     public RestTemplate llmRestTemplate(RestTemplateBuilder builder) {
@@ -40,7 +40,7 @@ public class RestTemplateConfig {
     public RestTemplate githubRestTemplate(RestTemplateBuilder builder) {
         RestTemplate rt = builder
                 .setConnectTimeout(CONNECT_TIMEOUT)
-                .setReadTimeout(DEFAULT_READ_TIMEOUT)
+                .setReadTimeout(Duration.ofMillis(githubProperties.getReadTimeoutMs()))
                 .build();
         rt.setUriTemplateHandler(new DefaultUriBuilderFactory("https://api.github.com"));
         rt.getInterceptors().add((request, body, execution) -> {
@@ -58,7 +58,7 @@ public class RestTemplateConfig {
     public RestTemplate slackRestTemplate(RestTemplateBuilder builder) {
         return builder
                 .setConnectTimeout(CONNECT_TIMEOUT)
-                .setReadTimeout(DEFAULT_READ_TIMEOUT)
+                .setReadTimeout(Duration.ofMillis(slackProperties.getReadTimeoutMs()))
                 .build();
     }
 }

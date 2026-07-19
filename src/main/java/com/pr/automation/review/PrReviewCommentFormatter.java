@@ -12,8 +12,12 @@ import java.util.List;
 // 4단계 파이프라인의 최종 결과를 GitHub PR 코멘트용 md 문자열로 변환합니다.
 @Component
 public class PrReviewCommentFormatter {
+    // 봇이 게시한 리뷰 코멘트 식별용 숨은 마커 - 재진입 시 이 마커의 존재로 게시 여부를 판별해 중복 게시를 막음
+    public static final String MARKER = "<!-- pr-automation:pr-review -->";
+
     public String format(PrReviewResult result) {
         StringBuilder sb = new StringBuilder();
+        sb.append(MARKER).append('\n');
         sb.append("## 자동 PR 리뷰 (4단계)\n\n");
         sb.append("> 언어 → 프레임워크/인프라 → 도메인/보안 → 최종검증 순으로 기계적 이슈를 먼저 정리했습니다. ")
                 .append("최종 판단은 리뷰어가 합니다.\n\n");

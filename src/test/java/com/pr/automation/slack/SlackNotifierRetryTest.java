@@ -51,7 +51,7 @@ class SlackNotifierRetryTest {
     void setUp() {
         restTemplate = mock(RestTemplate.class);
         sleepCount = new AtomicInteger();
-        notifier = new TestSlackNotifier(restTemplate, new SlackProperties(true, "http://slack.local/hook"), sleepCount);
+        notifier = new TestSlackNotifier(restTemplate, new SlackProperties(true, "http://slack.local/hook", 3, 10000), sleepCount);
     }
 
     @Test
@@ -119,7 +119,7 @@ class SlackNotifierRetryTest {
 
     @Test
     void 비활성화면_전송하지_않는다() {
-        SlackNotifier disabled = new SlackNotifier(restTemplate, new SlackProperties(false, "http://slack.local/hook"));
+        SlackNotifier disabled = new SlackNotifier(restTemplate, new SlackProperties(false, "http://slack.local/hook", 3, 10000));
 
         disabled.send(EVENT, RESULT);
 

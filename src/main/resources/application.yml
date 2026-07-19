@@ -26,12 +26,15 @@ github:
   login: ${GITHUB_LOGIN}
   webhook-secret: ${GITHUB_WEBHOOK_SECRET}
   repos: ${GITHUB_REPOS}
+  fetch-max-attempts: ${GITHUB_FETCH_MAX_ATTEMPTS}
+  read-timeout-ms: ${GITHUB_READ_TIMEOUT_MS}
   webhook-recovery:
     enabled: ${GITHUB_WEBHOOK_RECOVERY_ENABLED:true}
     lookback-hours: ${GITHUB_WEBHOOK_RECOVERY_LOOKBACK_HOURS:24}
     scheduler-enabled: ${GITHUB_WEBHOOK_RECOVERY_SCHEDULER_ENABLED:true}
     scheduler-interval-ms: ${GITHUB_WEBHOOK_RECOVERY_SCHEDULER_INTERVAL_MS:1800000}
     scheduler-lookback-hours: ${GITHUB_WEBHOOK_RECOVERY_SCHEDULER_LOOKBACK_HOURS:1}
+    max-redeliver-attempts: ${GITHUB_WEBHOOK_RECOVERY_MAX_REDELIVER_ATTEMPTS:5}
 
 llm:
   api-key: ${LLM_API_KEY}
@@ -45,6 +48,8 @@ llm:
 slack:
   enabled: ${SLACK_ENABLED}
   webhook-url: ${SLACK_WEBHOOK_URL}
+  max-attempts: ${SLACK_MAX_ATTEMPTS}
+  read-timeout-ms: ${SLACK_READ_TIMEOUT_MS}
 
 pr-analyzer:
   enabled: ${PR_ANALYZER_ENABLED}
@@ -53,12 +58,14 @@ pr-analyzer:
   max-files: ${PR_ANALYZER_MAX_FILES}
   max-file-chars: ${PR_ANALYZER_MAX_FILE_CHARS}
   max-dir-entries: ${PR_ANALYZER_MAX_DIR_ENTRIES}
+  lease-timeout-minutes: ${PR_ANALYZER_LEASE_TIMEOUT_MINUTES}
 
 pr-review:
   enabled: ${PR_REVIEW_ENABLED}
   max-files: ${PR_REVIEW_MAX_FILES}
   max-patch-chars: ${PR_REVIEW_MAX_PATCH_CHARS}
   post-to-slack: ${PR_REVIEW_POST_TO_SLACK}
+  lease-timeout-minutes: ${PR_REVIEW_LEASE_TIMEOUT_MINUTES}
 
 logging:
   level:

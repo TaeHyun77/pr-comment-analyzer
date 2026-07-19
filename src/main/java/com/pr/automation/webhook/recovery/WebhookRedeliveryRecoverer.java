@@ -27,8 +27,6 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class WebhookRedeliveryRecoverer {
     private static final int DEFAULT_LOOKBACK_HOURS = 24;
-    // 같은 delivery의 재전송 트리거 상한 — 초과하면 포이즌 delivery로 간주하고 복구를 포기 (RECEIVED로 위장하지 않아 coverage에는 누락으로 남음)
-    private static final int MAX_REDELIVER_ATTEMPTS = 5;
 
     private final GithubProperties githubProperties;
     private final GithubDeliveryClient deliveryClient;
@@ -82,11 +80,12 @@ public class WebhookRedeliveryRecoverer {
             return new RecoverySummary(effectiveHours, results, 0, 0);
         }
 
+        int maxRedeliverAttempts = githubProperties.getWebhookRecovery().getMaxRedeliverAttempts();
         Instant cutoff = Instant.now().minus(effectiveHours, ChronoUnit.HOURS);
         int totalTriggered = 0;
         int totalSkipped = 0;
         for (String repo : repos) {
-            RepoResult r = recoverRepo(repo, cutoff);
+            RepoResult r = recoverRepo(repo, cutoff, maxRedeliverAttempts);
             results.add(r);
             totalTriggered += r.getTriggered();
             totalSkipped += r.getSkipped();
@@ -95,7 +94,7 @@ public class WebhookRedeliveryRecoverer {
         return new RecoverySummary(effectiveHours, results, totalTriggered, totalSkipped);
     }
 
-    private RepoResult recoverRepo(String repo, Instant cutoff) {
+    private RepoResult recoverRepo(String repo, Instant cutoff, int maxRedeliverAttempts) {
         try {
             Optional<Long> hookOpt = deliveryClient.findHookId(repo);
             if (!hookOpt.isPresent()) {
@@ -123,9 +122,9 @@ public class WebhookRedeliveryRecoverer {
                     skipped++;
                     continue;
                 }
-                if (deliveryStore.getRedeliverCount(d.getGuid()) >= MAX_REDELIVER_ATTEMPTS) {
+                if (deliveryStore.getRedeliverCount(d.getGuid()) >= maxRedeliverAttempts) {
                     log.warn("재전송 상한({}회) 초과, 복구 포기 (포이즌 delivery): repo={} guid={}",
-                            MAX_REDELIVER_ATTEMPTS, repo, d.getGuid());
+                            maxRedeliverAttempts, repo, d.getGuid());
                     skipped++;
                     continue;
                 }

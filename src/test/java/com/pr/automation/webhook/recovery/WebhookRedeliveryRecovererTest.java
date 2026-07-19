@@ -31,7 +31,7 @@ class WebhookRedeliveryRecovererTest {
     private GithubProperties propsWith(java.util.List<String> repos, boolean enabled, boolean schedulerEnabled) {
         return new GithubProperties("token", "me", "secret", repos,
                 new GithubProperties.WebhookRecovery(enabled, 24, 
-                        schedulerEnabled, 1800000L, 1));
+                        schedulerEnabled, 1800000L, 1, 5), 3, 10000);
     }
 
     private GhDelivery delivery(long id, String guid, Instant at) {

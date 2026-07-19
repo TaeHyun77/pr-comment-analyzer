@@ -1,6 +1,7 @@
 package com.pr.automation.analysis.comment;
 
 import com.pr.automation.common.entity.WorkStatus;
+import com.pr.automation.config.PrAnalyzerProperties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -15,11 +16,14 @@ import java.util.Optional;
 @Component
 @RequiredArgsConstructor
 public class CommentStore {
-    // 점유 후 이 시간 동안 완료/실패가 없으면 죽은 워커의 점유로 간주해 탈취를 허용
-    // (에이전트 루프 최악 지연 ~10분 + 여유)
-    static final Duration LEASE_TIMEOUT = Duration.ofMinutes(15);
-
     private final CommentAnalysisStateRepository repository;
+    private final PrAnalyzerProperties properties;
+
+    // 점유 후 이 시간 동안 완료/실패가 없으면 죽은 워커의 점유로 간주해 탈취를 허용.
+    // 값 근거는 pr-analyzer.lease-timeout-minutes(PrAnalyzerProperties) 주석 참조 — 분석 단계 최악 지연을 넘겨야 함
+    Duration leaseTimeout() {
+        return Duration.ofMinutes(properties.getLeaseTimeoutMinutes());
+    }
 
     // 해당 ID가 이미 처리 완료됐거나 다른 워커가 점유 중이면 false, 점유에 성공하면 true를 반환
     public boolean tryClaim(long commentId) {
@@ -29,9 +33,9 @@ public class CommentStore {
         } catch (DataIntegrityViolationException e) {
             // 이미 행이 있음 — 만료된 lease(죽은 워커의 점유)면 탈취, 아니면(진행 중/완료) 포기
             Instant now = Instant.now();
-            boolean reclaimed = repository.reclaimExpired(commentId, now, now.minus(LEASE_TIMEOUT)) == 1;
+            boolean reclaimed = repository.reclaimExpired(commentId, now, now.minus(leaseTimeout())) == 1;
             if (reclaimed) {
-                log.warn("만료된 점유 탈취(lease {}분 초과): comment={}", LEASE_TIMEOUT.toMinutes(), commentId);
+                log.warn("만료된 점유 탈취(lease {}분 초과): comment={}", leaseTimeout().toMinutes(), commentId);
             }
             return reclaimed;
         }

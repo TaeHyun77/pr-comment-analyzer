@@ -33,9 +33,8 @@ public class SlackNotifier {
     private static final int TEXT_LIMIT = 2_900;
     private static final int HEADER_LIMIT = 150;
     private static final int REPLY_LIMIT = 2_700;
-    // 일시 오류 재시도 예산 — Slack 순단은 대부분 수 초 내 회복되므로 3회(백오프 1s→2s)로 잡음.
-    // 이걸로도 안 되는 실패는 호출자와 복구 사이클 몫
-    private static final int MAX_ATTEMPTS = 3;
+    // 일시 오류 재시도 시작 백오프 — Slack 순단은 대부분 수 초 내 회복되므로 1s→2s로 짧게 잡음.
+    // 재시도 횟수(slackProperties.maxAttempts)는 env로 분리, 소진 후 실패는 호출자와 복구 사이클 몫
     private static final long INITIAL_BACKOFF_MS = 1000L;
 
     private final RestTemplate slackRestTemplate;
@@ -157,8 +156,9 @@ public class SlackNotifier {
     // 일시 오류(429/5xx/네트워크 순단)는 짧게 재시도해 순단만으로 호출자(분석/리뷰 파이프라인)가
     // 실패 처리되는 것을 막는다. 소진 시 예외 — 통지 실패의 최종 처리는 호출자 몫
     private void post(Map<String, Object> payload) {
+        int maxAttempts = slackProperties.getMaxAttempts();
         long backoffMillis = INITIAL_BACKOFF_MS;
-        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
                 String response = slackRestTemplate.postForObject(slackProperties.getWebhookUrl(), payload, String.class);
                 if (response != null && !"ok".equalsIgnoreCase(response.trim())) {
@@ -170,15 +170,15 @@ public class SlackNotifier {
                     // 잘못된 payload 등 영구 오류 — 재시도해도 결과가 같으므로 즉시 실패
                     throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.SLACK_API_ERROR, e);
                 }
-                if (attempt == MAX_ATTEMPTS) {
+                if (attempt == maxAttempts) {
                     throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.SLACK_API_ERROR, e);
                 }
-                log.warn("Slack 전송 일시 오류({}), 재시도 {}/{}", e.getStatusCode(), attempt, MAX_ATTEMPTS);
+                log.warn("Slack 전송 일시 오류({}), 재시도 {}/{}", e.getStatusCode(), attempt, maxAttempts);
             } catch (ResourceAccessException e) {
-                if (attempt == MAX_ATTEMPTS) {
+                if (attempt == maxAttempts) {
                     throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.SLACK_API_ERROR, e);
                 }
-                log.warn("Slack 전송 네트워크 오류({}), 재시도 {}/{}", e.getMessage(), attempt, MAX_ATTEMPTS);
+                log.warn("Slack 전송 네트워크 오류({}), 재시도 {}/{}", e.getMessage(), attempt, maxAttempts);
             } catch (RestClientException e) {
                 throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.SLACK_API_ERROR, e);
             }

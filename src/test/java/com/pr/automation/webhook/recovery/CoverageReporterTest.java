@@ -20,7 +20,7 @@ class CoverageReporterTest {
 
     private GithubProperties propsWith(List<String> repos) {
         return new GithubProperties("token", "me", "secret", repos,
-                new GithubProperties.WebhookRecovery(true, 24, false, 1800000L, 1));
+                new GithubProperties.WebhookRecovery(true, 24, false, 1800000L, 1, 5), 3, 10000);
     }
 
     private GhDelivery delivery(String guid, String event, String action, Instant at) {

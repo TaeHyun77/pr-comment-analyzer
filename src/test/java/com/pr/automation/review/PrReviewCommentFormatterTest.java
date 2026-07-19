@@ -37,6 +37,14 @@ class PrReviewCommentFormatterTest {
     }
 
     @Test
+    void 출력_맨_앞에_식별_마커를_포함한다() {
+        // 재진입 시 이 마커로 게시 여부를 판별하므로, 마커가 빠지면 중복 게시 방지가 무력화됨
+        String md = formatter.format(PrReviewResult.builder().overallSummary("요약").build());
+
+        assertThat(md).startsWith(PrReviewCommentFormatter.MARKER);
+    }
+
+    @Test
     void 이슈가_없으면_없음_메시지를_렌더링한다() {
         PrReviewResult result = PrReviewResult.builder()
                 .overallSummary("요약")

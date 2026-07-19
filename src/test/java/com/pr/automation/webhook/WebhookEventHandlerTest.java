@@ -38,12 +38,12 @@ class WebhookEventHandlerTest {
         prReviewService = mock(PrReviewService.class);
         handler = new WebhookEventHandler(
                 objectMapper,
-                new GithubProperties("token", "myname", "secret", null, null),
-                new PrAnalyzerProperties(true, 8, 6, 25000, true, 100),
+                new GithubProperties("token", "myname", "secret", null, null, 3, 10000),
+                new PrAnalyzerProperties(true, 8, 6, 25000, true, 100, 25),
                 analysisService,
                 deliveryStore,
                 prReviewService,
-                new PrReviewProperties(true, 50, 6000, false));
+                new PrReviewProperties(true, 50, 6000, false, 15));
     }
 
     private byte[] bytes(String s) {
@@ -170,12 +170,12 @@ class WebhookEventHandlerTest {
     void includeOwnComments가_false면_내_코멘트는_제외된다() {
         WebhookEventHandler h = new WebhookEventHandler(
                 objectMapper,
-                new GithubProperties("token", "myname", "secret", null, null),
-                new PrAnalyzerProperties(false, 8, 6, 25000, true, 100),
+                new GithubProperties("token", "myname", "secret", null, null, 3, 10000),
+                new PrAnalyzerProperties(false, 8, 6, 25000, true, 100, 25),
                 analysisService,
                 deliveryStore,
                 prReviewService,
-                new PrReviewProperties(true, 50, 6000, false));
+                new PrReviewProperties(true, 50, 6000, false, 15));
         assertThat(h.extract("pull_request_review_comment", "d-3",
                 bytes(reviewCommentPayload("myname", "myname", "User", "created")))).isEmpty();
     }
@@ -294,12 +294,12 @@ class WebhookEventHandlerTest {
     void pr_review가_비활성이면_PR은_추출되지_않는다() {
         WebhookEventHandler disabled = new WebhookEventHandler(
                 objectMapper,
-                new GithubProperties("token", "myname", "secret", null, null),
-                new PrAnalyzerProperties(true, 8, 6, 25000, true, 100),
+                new GithubProperties("token", "myname", "secret", null, null, 3, 10000),
+                new PrAnalyzerProperties(true, 8, 6, 25000, true, 100, 25),
                 analysisService,
                 deliveryStore,
                 prReviewService,
-                new PrReviewProperties(false, 50, 6000, false));
+                new PrReviewProperties(false, 50, 6000, false, 15));
         assertThat(disabled.extractPullRequest("d", bytes(pullRequestPayload("myname", "User", "opened")))).isEmpty();
     }
 

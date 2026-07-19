@@ -16,6 +16,8 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -25,6 +27,9 @@ import static org.mockito.Mockito.when;
 class GithubClientTest {
 
     private static final String PULL_FILES_URL = "/repos/{owner}/{repo}/pulls/{number}/files?per_page=100";
+    private static final String ISSUE_COMMENTS_URL = "/repos/{owner}/{repo}/issues/{number}/comments?per_page=100&page={page}";
+    private static final String CREATE_COMMENT_URL = "/repos/{owner}/{repo}/issues/{number}/comments";
+    private static final String MARKER = "<!-- pr-automation:pr-review -->";
 
     private RestTemplate rt;
     private GithubClient client;
@@ -34,12 +39,12 @@ class GithubClientTest {
     void setUp() {
         rt = mock(RestTemplate.class);
         sleepCount = new AtomicInteger();
-        client = new TestGithubClient(rt, new GithubProperties("ghp_token", "me", "secret", null, null), sleepCount);
+        client = new TestGithubClient(rt, new GithubProperties("ghp_token", "me", "secret", null, null, 3, 10000), sleepCount);
     }
 
     @Test
     void 토큰_없으면_모든_조회가_empty() {
-        GithubClient disabled = new GithubClient(rt, new GithubProperties("", "me", "secret", null, null));
+        GithubClient disabled = new GithubClient(rt, new GithubProperties("", "me", "secret", null, null, 3, 10000));
 
         assertThat(disabled.fetchFileContent("me/repo", "src/Foo.java", "sha")).isEmpty();
         assertThat(disabled.listDirectory("me/repo", "src", "sha")).isEmpty();
@@ -218,7 +223,94 @@ class GithubClientTest {
         assertThat(sleepCount.get()).isEqualTo(2);
     }
 
+    @Test
+    void createIssueComment_일시오류는_재시도후_성공한다() {
+        when(rt.postForObject(eq(CREATE_COMMENT_URL), any(), eq(Void.class), eq("me"), eq("repo"), eq(7)))
+                .thenThrow(serverError(HttpStatus.SERVICE_UNAVAILABLE))
+                .thenThrow(new ResourceAccessException("read timed out"))
+                .thenReturn(null);
+
+        client.createIssueComment("me/repo", 7, "본문");
+
+        verify(rt, times(3)).postForObject(eq(CREATE_COMMENT_URL), any(), eq(Void.class), eq("me"), eq("repo"), eq(7));
+        assertThat(sleepCount.get()).isEqualTo(2);
+    }
+
+    @Test
+    void createIssueComment_영구오류는_재시도없이_즉시_예외() {
+        // 권한 누락(403) 등은 재시도해도 결과가 같음 — 낭비 사이클 없이 즉시 실패해야 함
+        when(rt.postForObject(eq(CREATE_COMMENT_URL), any(), eq(Void.class), eq("me"), eq("repo"), eq(7)))
+                .thenThrow(clientError(HttpStatus.FORBIDDEN));
+
+        assertThatThrownBy(() -> client.createIssueComment("me/repo", 7, "본문"))
+                .isInstanceOf(com.pr.automation.common.error.AutomationException.class);
+        verify(rt, times(1)).postForObject(eq(CREATE_COMMENT_URL), any(), eq(Void.class), eq("me"), eq("repo"), eq(7));
+        assertThat(sleepCount.get()).isZero();
+    }
+
+    @Test
+    void createIssueComment_일시오류가_계속되면_재시도_소진후_예외() {
+        when(rt.postForObject(eq(CREATE_COMMENT_URL), any(), eq(Void.class), eq("me"), eq("repo"), eq(7)))
+                .thenThrow(serverError(HttpStatus.BAD_GATEWAY));
+
+        assertThatThrownBy(() -> client.createIssueComment("me/repo", 7, "본문"))
+                .isInstanceOf(com.pr.automation.common.error.AutomationException.class);
+        verify(rt, times(3)).postForObject(eq(CREATE_COMMENT_URL), any(), eq(Void.class), eq("me"), eq("repo"), eq(7));
+        assertThat(sleepCount.get()).isEqualTo(2);
+    }
+
+    @Test
+    void hasIssueCommentWithMarker_첫페이지에서_마커를_찾으면_true() {
+        when(rt.getForObject(eq(ISSUE_COMMENTS_URL), eq(GithubClient.GhComment[].class), eq("me"), eq("repo"), eq(7), eq(1)))
+                .thenReturn(new GithubClient.GhComment[] {
+                        comment("일반 코멘트"),
+                        comment(MARKER + "\n## 자동 PR 리뷰")});
+
+        assertThat(client.hasIssueCommentWithMarker("me/repo", 7, MARKER)).isTrue();
+    }
+
+    @Test
+    void hasIssueCommentWithMarker_마커가_없으면_false_마지막페이지에서_중단() {
+        when(rt.getForObject(eq(ISSUE_COMMENTS_URL), eq(GithubClient.GhComment[].class), eq("me"), eq("repo"), eq(7), eq(1)))
+                .thenReturn(new GithubClient.GhComment[] {comment("일반 코멘트")});
+
+        assertThat(client.hasIssueCommentWithMarker("me/repo", 7, MARKER)).isFalse();
+        // 응답이 100건 미만 = 마지막 페이지 — 다음 페이지를 조회하지 않음
+        verify(rt, times(1)).getForObject(eq(ISSUE_COMMENTS_URL), eq(GithubClient.GhComment[].class), eq("me"), eq("repo"), eq(7), any());
+    }
+
+    @Test
+    void hasIssueCommentWithMarker_100건이면_다음_페이지까지_조회한다() {
+        GithubClient.GhComment[] fullPage = new GithubClient.GhComment[100];
+        for (int i = 0; i < 100; i++) {
+            fullPage[i] = comment("코멘트 " + i);
+        }
+        when(rt.getForObject(eq(ISSUE_COMMENTS_URL), eq(GithubClient.GhComment[].class), eq("me"), eq("repo"), eq(7), eq(1)))
+                .thenReturn(fullPage);
+        when(rt.getForObject(eq(ISSUE_COMMENTS_URL), eq(GithubClient.GhComment[].class), eq("me"), eq("repo"), eq(7), eq(2)))
+                .thenReturn(new GithubClient.GhComment[] {comment(MARKER)});
+
+        assertThat(client.hasIssueCommentWithMarker("me/repo", 7, MARKER)).isTrue();
+    }
+
+    @Test
+    void hasIssueCommentWithMarker_조회_영구오류는_예외로_전파() {
+        // "모르면 게시하지 않는다"(fail-closed) — 조회 실패를 false로 뭉개면 중복 게시로 이어짐
+        when(rt.getForObject(eq(ISSUE_COMMENTS_URL), eq(GithubClient.GhComment[].class), eq("me"), eq("repo"), eq(7), eq(1)))
+                .thenThrow(clientError(HttpStatus.NOT_FOUND));
+
+        assertThatThrownBy(() -> client.hasIssueCommentWithMarker("me/repo", 7, MARKER))
+                .isInstanceOf(com.pr.automation.common.error.AutomationException.class);
+        assertThat(sleepCount.get()).isZero();
+    }
+
     // --- 헬퍼 ---
+
+    private static GithubClient.GhComment comment(String body) {
+        GithubClient.GhComment c = new GithubClient.GhComment();
+        c.setBody(body);
+        return c;
+    }
 
     private static HttpClientErrorException clientError(HttpStatus status) {
         return HttpClientErrorException.create(status, status.getReasonPhrase(), null,

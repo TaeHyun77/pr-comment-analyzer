@@ -26,7 +26,7 @@ import static org.mockito.Mockito.when;
 class PrReviewPipelineTest {
 
     private static final PrReviewProperties PROPS =
-            new PrReviewProperties(true, 50, 6000, false);
+            new PrReviewProperties(true, 50, 6000, false, 15);
 
     private static PrReviewEvent event() {
         return PrReviewEvent.builder()

@@ -13,4 +13,6 @@ import org.springframework.boot.context.properties.ConstructorBinding;
 public class SlackProperties {
     private final boolean enabled;
     private final String webhookUrl;
+    private final int maxAttempts;    // 전송 일시 오류 재시도 횟수 (LLM_MAX_ATTEMPTS와 동일 클래스)
+    private final int readTimeoutMs;  // Slack API 응답 대기 시간(ms)
 }

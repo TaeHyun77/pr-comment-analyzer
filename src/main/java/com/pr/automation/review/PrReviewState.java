@@ -11,6 +11,7 @@ import javax.persistence.Entity;
 import javax.persistence.EnumType;
 import javax.persistence.Enumerated;
 import javax.persistence.Id;
+import javax.persistence.Lob;
 import javax.persistence.Table;
 import java.time.Instant;
 
@@ -33,6 +34,11 @@ public class PrReviewState implements Persistable<String> {
     private Instant claimedAt;
 
     private Instant completedAt;
+
+    // ANALYZED 상태에서만 값이 있음 - 게시 실패 시 재리뷰 없이 이 결과로 게시만 재시도
+    // (@Lob: MySQL longtext / 테스트 H2 clob 양쪽 호환. 완료 시 null로 비움)
+    @Lob
+    private String resultJson;
 
     private PrReviewState(String prKey, Instant claimedAt) {
         this.prKey = prKey;
