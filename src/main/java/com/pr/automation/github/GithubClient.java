@@ -31,13 +31,16 @@ import java.util.concurrent.ThreadLocalRandom;
 @Component
 @RequiredArgsConstructor
 public class GithubClient {
-    // fetchPullFiles 일시 오류 재시도 예산 — GitHub 순단은 대부분 수 초 내 회복되므로 짧게 3회(백오프 1s→2s)로 잡음.
-    // 이걸로도 안 되는 실패는 복구 사이클(redelivery)이 맡음
-    private static final int FETCH_MAX_ATTEMPTS = 3;
+    // 일시 오류 재시도 시작 백오프 — GitHub 순단은 대부분 수 초 내 회복되므로 1s→2s로 짧게 잡음.
+    // 재시도 횟수(fetchMaxAttempts)는 env로 분리, 이걸로도 안 되는 실패는 복구 사이클(redelivery)이 맡음
     private static final long FETCH_INITIAL_BACKOFF_MS = 1000L;
 
     private final RestTemplate githubRestTemplate;
     private final GithubProperties githubProperties;
+
+    private int fetchMaxAttempts() {
+        return githubProperties.getFetchMaxAttempts();
+    }
 
     // githubProperties에 토큰이 설정돼 있는지로 클라이언트 활성 여부를 판단
     public boolean isEnabled() {
@@ -172,7 +175,7 @@ public class GithubClient {
         }
 
         long backoffMillis = FETCH_INITIAL_BACKOFF_MS;
-        for (int attempt = 1; attempt <= FETCH_MAX_ATTEMPTS; attempt++) {
+        for (int attempt = 1; attempt <= fetchMaxAttempts(); attempt++) {
             try {
                 GhPullFile[] files = githubRestTemplate.getForObject(
                         "/repos/{owner}/{repo}/pulls/{number}/files?per_page=100",
@@ -186,15 +189,15 @@ public class GithubClient {
                     return Optional.empty();
                 }
                 log.warn("GitHub PR 변경 파일 조회 일시 오류({}), 재시도 {}/{}: {} #{}",
-                        e.getStatusCode(), attempt, FETCH_MAX_ATTEMPTS, repoFullName, prNumber);
+                        e.getStatusCode(), attempt, fetchMaxAttempts(), repoFullName, prNumber);
             } catch (ResourceAccessException e) {
                 log.warn("GitHub PR 변경 파일 조회 네트워크 오류({}), 재시도 {}/{}: {} #{}",
-                        e.getMessage(), attempt, FETCH_MAX_ATTEMPTS, repoFullName, prNumber);
+                        e.getMessage(), attempt, fetchMaxAttempts(), repoFullName, prNumber);
             } catch (Exception e) {
                 log.warn("GitHub PR 변경 파일 조회 실패: {} #{}", repoFullName, prNumber, e);
                 return Optional.empty();
             }
-            if (attempt == FETCH_MAX_ATTEMPTS || !sleepWithFullJitter(backoffMillis)) {
+            if (attempt == fetchMaxAttempts() || !sleepWithFullJitter(backoffMillis)) {
                 return Optional.empty();
             }
             backoffMillis *= 2;
@@ -231,7 +234,79 @@ public class GithubClient {
         }
     }
 
+    // PR(=issue)에 마커 문자열을 포함한 코멘트가 이미 게시돼 있는지 확인합니다.
+    // 게시 성공 후 완료 기록 전에 크래시해 재진입한 경우의 중복 게시 방지용입니다.
+    // 조회 실패는 예외로 전파 — "모르면 게시하지 않는다"(fail-closed)가 중복 방지 목표에 맞고,
+    // 아직 게시 전이므로 redelivery 재시도가 안전합니다 (조회는 삼킨다는 다른 메서드들과 기준이 다른 이유)
+    public boolean hasIssueCommentWithMarker(String repoFullName, int prNumber, String marker) {
+        if (!isEnabled()) {
+            throw new AutomationException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.GITHUB_API_ERROR, "GitHub 토큰 미설정으로 코멘트 조회 불가");
+        }
+        String[] parts = splitRepo(repoFullName);
+        if (parts == null) {
+            throw new AutomationException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.GITHUB_API_ERROR, "레포 식별 불가: " + repoFullName);
+        }
+
+        // 봇 코멘트는 PR 초기에 달리므로 보통 1페이지에서 발견됨. 응답이 100건 미만이면 마지막 페이지
+        for (int page = 1; ; page++) {
+            GhComment[] comments = fetchIssueCommentsPage(parts, prNumber, page);
+            if (comments == null || comments.length == 0) {
+                return false;
+            }
+            for (GhComment c : comments) {
+                if (c.getBody() != null && c.getBody().contains(marker)) {
+                    return true;
+                }
+            }
+            if (comments.length < 100) {
+                return false;
+            }
+        }
+    }
+
+    // 이슈 코멘트 한 페이지 조회. 일시 오류(429/5xx/네트워크 순단)는 짧게 재시도하고, 영구 오류/소진 시 예외로 전파
+    private GhComment[] fetchIssueCommentsPage(String[] parts, int prNumber, int page) {
+        long backoffMillis = FETCH_INITIAL_BACKOFF_MS;
+        for (int attempt = 1; attempt <= fetchMaxAttempts(); attempt++) {
+            try {
+                return githubRestTemplate.getForObject(
+                        "/repos/{owner}/{repo}/issues/{number}/comments?per_page=100&page={page}",
+                        GhComment[].class,
+                        parts[0], parts[1], prNumber, page);
+            } catch (HttpStatusCodeException e) {
+                if (e.getStatusCode() != HttpStatus.TOO_MANY_REQUESTS && !e.getStatusCode().is5xxServerError()) {
+                    throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR,
+                            "PR 코멘트 목록 조회 실패(" + e.getStatusCode() + "): " + parts[0] + "/" + parts[1] + " #" + prNumber, e);
+                }
+                if (attempt == fetchMaxAttempts()) {
+                    throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR,
+                            "PR 코멘트 목록 조회 재시도 소진: " + parts[0] + "/" + parts[1] + " #" + prNumber, e);
+                }
+                log.warn("PR 코멘트 목록 조회 일시 오류({}), 재시도 {}/{}: {}/{} #{}",
+                        e.getStatusCode(), attempt, fetchMaxAttempts(), parts[0], parts[1], prNumber);
+            } catch (ResourceAccessException e) {
+                if (attempt == fetchMaxAttempts()) {
+                    throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR,
+                            "PR 코멘트 목록 조회 재시도 소진: " + parts[0] + "/" + parts[1] + " #" + prNumber, e);
+                }
+                log.warn("PR 코멘트 목록 조회 네트워크 오류({}), 재시도 {}/{}: {}/{} #{}",
+                        e.getMessage(), attempt, fetchMaxAttempts(), parts[0], parts[1], prNumber);
+            } catch (RestClientException e) {
+                throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR,
+                        "PR 코멘트 목록 조회 실패: " + parts[0] + "/" + parts[1] + " #" + prNumber, e);
+            }
+            if (!sleepWithFullJitter(backoffMillis)) {
+                throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR, "PR 코멘트 목록 조회 재시도 중 인터럽트 발생");
+            }
+            backoffMillis *= 2;
+        }
+        // 도달 불가 - for 안의 모든 경로가 return 또는 throw로 종료됨
+        throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR, "PR 코멘트 목록 조회 실패 (루프 이탈)");
+    }
+
     // PR(=issue)에 코멘트를 게시합니다.
+    // 일시 오류(429/5xx/네트워크 순단)는 짧게 재시도해 순단 한 번이 redelivery(분 단위 대기 + 포이즌 예산 소모)로
+    // 번지는 것을 막고, 권한/유효성 등 영구 오류는 재시도해도 결과가 같으므로 즉시 실패시킵니다
     public void createIssueComment(String repoFullName, int prNumber, String body) {
         if (!isEnabled()) {
             throw new AutomationException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.GITHUB_API_ERROR, "GitHub 토큰 미설정으로 코멘트 게시 불가");
@@ -241,15 +316,44 @@ public class GithubClient {
         if (parts == null) {
             throw new AutomationException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.GITHUB_API_ERROR, "레포 식별 불가: " + repoFullName);
         }
-        try {
-            githubRestTemplate.postForObject(
-                    "/repos/{owner}/{repo}/issues/{number}/comments",
-                    Collections.singletonMap("body", body),
-                    Void.class,
-                    parts[0], parts[1], prNumber);
-        } catch (RestClientException e) {
-            throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR, "PR 코멘트 게시 실패: " + repoFullName + " #" + prNumber, e);
+
+        long backoffMillis = FETCH_INITIAL_BACKOFF_MS;
+        for (int attempt = 1; attempt <= fetchMaxAttempts(); attempt++) {
+            try {
+                githubRestTemplate.postForObject(
+                        "/repos/{owner}/{repo}/issues/{number}/comments",
+                        Collections.singletonMap("body", body),
+                        Void.class,
+                        parts[0], parts[1], prNumber);
+                return;
+            } catch (HttpStatusCodeException e) {
+                if (e.getStatusCode() != HttpStatus.TOO_MANY_REQUESTS && !e.getStatusCode().is5xxServerError()) {
+                    throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR,
+                            "PR 코멘트 게시 실패(" + e.getStatusCode() + "): " + repoFullName + " #" + prNumber, e);
+                }
+                if (attempt == fetchMaxAttempts()) {
+                    throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR,
+                            "PR 코멘트 게시 재시도 소진: " + repoFullName + " #" + prNumber, e);
+                }
+                log.warn("PR 코멘트 게시 일시 오류({}), 재시도 {}/{}: {} #{}",
+                        e.getStatusCode(), attempt, fetchMaxAttempts(), repoFullName, prNumber);
+            } catch (ResourceAccessException e) {
+                if (attempt == fetchMaxAttempts()) {
+                    throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR,
+                            "PR 코멘트 게시 재시도 소진: " + repoFullName + " #" + prNumber, e);
+                }
+                log.warn("PR 코멘트 게시 네트워크 오류({}), 재시도 {}/{}: {} #{}",
+                        e.getMessage(), attempt, fetchMaxAttempts(), repoFullName, prNumber);
+            } catch (RestClientException e) {
+                throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR, "PR 코멘트 게시 실패: " + repoFullName + " #" + prNumber, e);
+            }
+            if (!sleepWithFullJitter(backoffMillis)) {
+                throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR, "PR 코멘트 게시 재시도 중 인터럽트 발생");
+            }
+            backoffMillis *= 2;
         }
+        // 도달 불가 - for 안의 모든 경로가 return 또는 throw로 종료됨
+        throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR, "PR 코멘트 게시 실패 (루프 이탈)");
     }
 
     // path를 직접 URL에 넣어 슬래시를 보존 (DefaultUriBuilderFactory의 path-var 인코딩 회피)

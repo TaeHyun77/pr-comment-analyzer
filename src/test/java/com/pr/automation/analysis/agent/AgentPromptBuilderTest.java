@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class AgentPromptBuilderTest {
 
     private final AgentPromptBuilder builder =
-            new AgentPromptBuilder(new PrAnalyzerProperties(true, 8, 6, 25000, true, 100));
+            new AgentPromptBuilder(new PrAnalyzerProperties(true, 8, 6, 25000, true, 100, 25));
 
     // 파일 프리페치 없이 프롬프트 본문만 검증하기 위한 빈 reader
     private static final RepoFileReader EMPTY_READER = new RepoFileReader() {

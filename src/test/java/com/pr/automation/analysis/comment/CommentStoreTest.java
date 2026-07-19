@@ -1,9 +1,11 @@
 package com.pr.automation.analysis.comment;
 
 import com.pr.automation.common.entity.WorkStatus;
+import com.pr.automation.config.PrAnalyzerProperties;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -20,9 +22,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 // 실제 DB(PK 제약)와 쿼리로 점유/완료/lease 동작을 검증
 // 운영과 동일하게 각 리포지토리 호출이 독립 트랜잭션이 되도록 테스트 트랜잭션을 끈다
+// CommentStore가 lease 값을 읽는 PrAnalyzerProperties를 test application.properties에서 정식 바인딩
 @DataJpaTest
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import(CommentStore.class)
+@EnableConfigurationProperties(PrAnalyzerProperties.class)
 class CommentStoreTest {
 
     @Autowired
@@ -154,7 +158,7 @@ class CommentStoreTest {
     // claimed_at을 lease 만료 이전 시각으로 되돌려 죽은 워커의 점유를 흉내낸다
     // Hibernate가 hibernate.jdbc.time_zone=UTC로 저장하므로, JDBC 직접 쓰기도 UTC 벽시계로 맞춘다
     private void expireLease(long commentId) {
-        Instant expired = Instant.now().minus(CommentStore.LEASE_TIMEOUT).minus(Duration.ofMinutes(1));
+        Instant expired = Instant.now().minus(store.leaseTimeout()).minus(Duration.ofMinutes(1));
         jdbcTemplate.update("update comment_analysis_state set claimed_at = ? where comment_id = ?",
                 Timestamp.valueOf(LocalDateTime.ofInstant(expired, ZoneOffset.UTC)), commentId);
     }

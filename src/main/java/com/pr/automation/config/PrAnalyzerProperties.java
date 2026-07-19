@@ -20,4 +20,8 @@ public class PrAnalyzerProperties {
 
     private final boolean enabled; // 코멘트 분석 전역 on/off (kill-switch). false면 분석을 트리거하지 않음
     private final int maxDirEntries; // list_directory 결과의 최대 엔트리 수 (컨텍스트 보호)
+
+    // 점유 lease 만료 시간(분). 분석 단계 최악 지연(라운드 × 재시도 × read timeout)을 넘겨야
+    // 느리지만 살아있는 워커의 점유를 탈취하지 않음 — 탈취 시 전체 재분석 + Slack 통지 중복 발생
+    private final int leaseTimeoutMinutes;
 }
