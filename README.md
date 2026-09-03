@@ -12,7 +12,7 @@
 
 ## 기술 스택
 
-BackEnd : Spring Boot 2.7, Java 8, Gradle
+BackEnd : Java, Spring Boot
 
 LLM : ( 사용자에 따라 변경 가능 )
 
