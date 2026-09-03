@@ -2,11 +2,11 @@
 
 자신의 GitHub PR을 AI가 자동으로 분석해주는 시스템
 
-① PR을 생성하면 언어→프레임워크/인프라→도메인/보안→최종검증 4단계 과정을 통해 PR을 분석하며, 이 결과를 해당 PR에 코멘트로 게시합니다.
+① PR 생성 시, AI가 언어 → 프레임워크/인프라 → 도메인/보안 → 최종 검증의 단계로 코드를 분석하고, 분석 결과를 해당 PR에 코멘트로 게시합니다.
 
-② PR 코멘트가 달리면 요약/현재 방식과 제안 방식 비교/판정/근거/답변 초안을 Slack으로 전송하여 사용자가 코멘트에 대한 분석을 보다 쉽도록 해줍니다.<br><br>
+② 특정 PR에 코멘트가 달리면, AI가 해당 코멘트를 분석하여 요약, 현재 방식과 제안 방식의 비교, 판정, 근거, 답변 초안을 생성하고 이를 Slack으로 전송하여 해당 코멘트에 대해 사용자가 빨리 파악할 수 있도록 합니다.<br><br>
 
-> 블로그 : [https://velog.io/@ayeah77/series/PR-리뷰-코멘트](https://velog.io/@ayeah77/series/PR-%EB%A6%AC%EB%B7%B0-%EC%BD%94%EB%A9%98%ED%8A%B8)
+> 개발 블로그 : [https://velog.io/@ayeah77/series/PR-리뷰-코멘트](https://velog.io/@ayeah77/series/PR-%EB%A6%AC%EB%B7%B0-%EC%BD%94%EB%A9%98%ED%8A%B8)
 
 <br>
 
@@ -14,7 +14,7 @@
 
 BackEnd : Spring Boot 2.7, Java 8, Gradle
 
-LLM : Groq API ( 사용자에 따라 변경 가능 )
+LLM : ( 사용자에 따라 변경 가능 )
 
 Integration : GitHub Repository Webhook & REST API
 
