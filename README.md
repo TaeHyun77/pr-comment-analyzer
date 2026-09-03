@@ -6,7 +6,7 @@
 
 <br>
 
-## 기술 스택
+### 기술 스택
 
 BackEnd : Java, Spring Boot
 
@@ -16,7 +16,9 @@ Integration : GitHub Repository Webhook & REST API
 
 Notification : Slack Incoming Webhook<br><br>
 
-## PR COMMENT 분석 동작 흐름
+### PR COMMENT 분석 & PR 분석 동작 흐름
+
+**PR COMMENT 분석**
 
 기존 AI 코드 리뷰 서비스들은 PR 자동 생성이나 코드 리뷰 기능을 제공하는 경우는 있었지만, PR 리뷰 코멘트에 대한 답변을 분석해주는 시스템은 찾아보기 어려웠습니다. 이에 리뷰 코멘트 분석 과정을 직접 구현했습니다.<br><br>
 
@@ -41,7 +43,7 @@ Notification : Slack Incoming Webhook<br><br>
     
     분석이 완료되면 코멘트의 타당성, 판단 근거, 현재 코드와 제안 방식의 비교, 리뷰어에게 남길 답변 초안 등을 생성하여 Slack으로 전송합니다. 이후 처리 완료 상태를 저장하여 동일한 이벤트가 중복 처리되지 않도록 관리합니다.<br><br>
 
-**PR 분석 동작 흐름**
+**PR 분석**
 
 PR 생성 시, 언어 → 프레임워크/인프라 → 도메인/보안 → 최종 검증의 4단계를 통해 PR을 분석하며, 리뷰어가 코드를 열어보기 전에 아래 항목으로 구조화된 요약을 PR 코멘트로 게시합니다. 
 
