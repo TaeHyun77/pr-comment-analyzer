@@ -20,7 +20,7 @@ Notification : Slack Incoming Webhook<br><br>
 ---
 **PR COMMENT 분석**
 
-기존 AI 코드 리뷰 서비스들은 PR 자동 생성이나 코드 리뷰 기능을 제공하는 경우는 있었지만, PR 리뷰 코멘트에 대한 답변을 분석해주는 시스템은 찾아보기 어려웠습니다. 이에 리뷰 코멘트 분석 과정을 직접 구현했습니다.<br><br>
+기존 AI 코드 리뷰 서비스에서 찾기 어려웠던 PR 리뷰 코멘트에 대한 답변 분석 기능을 구현했습니다.<br><br>
 
 1. GitHub Webhook 이벤트 수신 및 검증
     
