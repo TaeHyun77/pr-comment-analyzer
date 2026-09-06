@@ -20,6 +20,9 @@ Notification : Slack Incoming Webhook<br><br>
 ---
 **PR COMMENT 분석**
 
+<img width="747" height="246" alt="image" src="https://github.com/user-attachments/assets/cab5ecb3-eeab-4299-9558-d6234992ddc7" />
+
+
 기존 AI 코드 리뷰 서비스에서 찾기 어려웠던 PR 리뷰 코멘트에 대한 답변 분석 기능을 구현했습니다.<br><br>
 
 1. GitHub Webhook 이벤트 수신 및 검증
