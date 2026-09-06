@@ -16,10 +16,8 @@ Integration : GitHub Repository Webhook & REST API
 
 Notification : Slack Incoming Webhook<br><br>
 
-### PR COMMENT 분석 & PR 분석 동작 흐름
+### PR COMMENT 분석
 ---
-**PR COMMENT 분석**
-
 <img width="747" height="246" alt="image" src="https://github.com/user-attachments/assets/cab5ecb3-eeab-4299-9558-d6234992ddc7" />
 
 1. 웹훅 검증 및 분석 대상 확인
@@ -59,8 +57,8 @@ Notification : Slack Incoming Webhook<br><br>
 
    처리 중 예외가 발생한 경우에도 반드시 락을 해제하며, 완료 상태는 기록하지 않습니다. 따라서 동일한 작업이 이후 다시 처리될 수 있도록 합니다.<br><br>
 
-**PR 분석**
-
+### PR 분석
+---
 PR 생성 시, 언어 → 프레임워크/인프라 → 도메인/보안 → 최종 검증의 4단계를 통해 PR을 분석하며, 리뷰어가 코드를 열어보기 전에 아래 항목으로 구조화된 요약을 PR 코멘트로 게시합니다. 
 
 대충 훑고 넘기는 리뷰를 줄이고, 리뷰어가 어디에 시간을 집중해야 할지 미리 가늠할 수 있게 하는 것이 목적입니다.
