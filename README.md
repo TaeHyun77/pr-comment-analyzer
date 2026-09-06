@@ -72,3 +72,6 @@ PR 생성 시, 언어 → 프레임워크/인프라 → 도메인/보안 → 최
 - ⭐️ 리뷰 포인트 : PR 내 파일/영역별로 위험도를 표시해 리뷰어가 어디에 검토 시간을 집중해야 하는지 미리 가늠할 수 있게 합니다.
 
 큰 PR일수록 분석과 리뷰 모두 정확도가 떨어지므로, 분석 대상 파일 수(PR_REVIEW_MAX_FILES)와 파일별 patch 길이(PR_REVIEW_MAX_PATCH_CHARS)를 제한해 과도한 토큰 사용과 응답 지연을 방지합니다.<br><br>
+
+
+<img width="1216" height="628" alt="image" src="https://github.com/user-attachments/assets/51b67201-86e8-4bc7-b59f-0f80a8f86066" />
