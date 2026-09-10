@@ -1,6 +1,6 @@
 package com.pr.automation.analysis.comment;
 
-import com.pr.automation.common.entity.WorkStatus;
+import com.pr.automation.analysis.WorkStatus;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -15,7 +15,6 @@ import javax.persistence.Lob;
 import javax.persistence.Table;
 import java.time.Instant;
 
-// 코멘트 분석 점유/완료 상태. PK(comment_id) 제약이 인스턴스 간 원자적 점유를 보장한다
 @Getter
 @Entity
 @Table(name = "comment_analysis_state")
@@ -27,28 +26,37 @@ public class CommentAnalysisState implements Persistable<Long> {
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
-    private WorkStatus status; // IN_PROGRESS or COMPLETED
+    private WorkStatus status;
 
-    // lease 기준 시각 - 만료된 IN_PROGRESS 점유는 다른 워커가 탈취하며 이 값을 갱신
+    // 마지막 점유/상태 전환 시각 - ANALYZED의 통지 유예 판정 기준이며 재점유 때 갱신된다.
+    // IN_PROGRESS는 이 값으로 탈취되지 않는다 (기동 시 FAILED 강등으로만 복구)
     @Column(nullable = false)
     private Instant claimedAt;
 
-    private Instant completedAt;
-
     // ANALYZED 상태에서만 값이 있음 - 통지 실패 시 재분석 없이 이 결과로 통지만 재시도
-    // (@Lob: MySQL longtext / 테스트 H2 clob 양쪽 호환. 완료 시 null로 비움)
     @Lob
     private String resultJson;
 
-    private CommentAnalysisState(Long commentId, Instant claimedAt) {
+    // 재시도 시 CommentEvent를 되살리기 위한 원본 - 웹훅 payload는 요청 종료와 함께 사라짐
+    // 직렬화에 실패하면 null이며, 그 행은 복구 대상이 되어도 이벤트를 복원할 수 없음
+    @Lob
+    private String eventJson;
+
+    // 점유에 성공한 누적 횟수 - 최초 INSERT가 1, 재점유마다 1씩 증가해 상한 초과 시 복구를 포기한다
+    @Column(nullable = false)
+    private int attemptCount;
+
+    private CommentAnalysisState(Long commentId, Instant claimedAt, String eventJson) {
         this.commentId = commentId;
         this.status = WorkStatus.IN_PROGRESS;
         this.claimedAt = claimedAt;
+        this.eventJson = eventJson;
+        this.attemptCount = 1;
     }
 
     // IN_PROGRESS 점유 행 생성
-    public static CommentAnalysisState claim(long commentId, Instant now) {
-        return new CommentAnalysisState(commentId, now);
+    public static CommentAnalysisState claim(long commentId, Instant now, String eventJson) {
+        return new CommentAnalysisState(commentId, now, eventJson);
     }
 
     @Override

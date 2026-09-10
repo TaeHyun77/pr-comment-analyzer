@@ -1,6 +1,7 @@
 package com.pr.automation.github;
 
-import com.pr.automation.config.GithubProperties;
+import com.pr.automation.config.properties.GithubProperties;
+import com.pr.automation.error.AutomationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -39,12 +40,12 @@ class GithubClientTest {
     void setUp() {
         rt = mock(RestTemplate.class);
         sleepCount = new AtomicInteger();
-        client = new TestGithubClient(rt, new GithubProperties("ghp_token", "me", "secret", null, null, 3, 10000), sleepCount);
+        client = new TestGithubClient(rt, new GithubProperties("ghp_token", "me", "secret", null, 3, 10000), sleepCount);
     }
 
     @Test
     void 토큰_없으면_모든_조회가_empty() {
-        GithubClient disabled = new GithubClient(rt, new GithubProperties("", "me", "secret", null, null, 3, 10000));
+        GithubClient disabled = new GithubClient(rt, new GithubProperties("", "me", "secret", null, 3, 10000));
 
         assertThat(disabled.fetchFileContent("me/repo", "src/Foo.java", "sha")).isEmpty();
         assertThat(disabled.listDirectory("me/repo", "src", "sha")).isEmpty();
@@ -243,7 +244,7 @@ class GithubClientTest {
                 .thenThrow(clientError(HttpStatus.FORBIDDEN));
 
         assertThatThrownBy(() -> client.createIssueComment("me/repo", 7, "본문"))
-                .isInstanceOf(com.pr.automation.common.error.AutomationException.class);
+                .isInstanceOf(AutomationException.class);
         verify(rt, times(1)).postForObject(eq(CREATE_COMMENT_URL), any(), eq(Void.class), eq("me"), eq("repo"), eq(7));
         assertThat(sleepCount.get()).isZero();
     }
@@ -254,7 +255,7 @@ class GithubClientTest {
                 .thenThrow(serverError(HttpStatus.BAD_GATEWAY));
 
         assertThatThrownBy(() -> client.createIssueComment("me/repo", 7, "본문"))
-                .isInstanceOf(com.pr.automation.common.error.AutomationException.class);
+                .isInstanceOf(AutomationException.class);
         verify(rt, times(3)).postForObject(eq(CREATE_COMMENT_URL), any(), eq(Void.class), eq("me"), eq("repo"), eq(7));
         assertThat(sleepCount.get()).isEqualTo(2);
     }
@@ -300,7 +301,7 @@ class GithubClientTest {
                 .thenThrow(clientError(HttpStatus.NOT_FOUND));
 
         assertThatThrownBy(() -> client.hasIssueCommentWithMarker("me/repo", 7, MARKER))
-                .isInstanceOf(com.pr.automation.common.error.AutomationException.class);
+                .isInstanceOf(AutomationException.class);
         assertThat(sleepCount.get()).isZero();
     }
 

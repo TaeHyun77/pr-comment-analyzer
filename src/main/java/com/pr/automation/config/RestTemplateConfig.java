@@ -1,5 +1,7 @@
 package com.pr.automation.config;
 
+import com.pr.automation.config.properties.GithubProperties;
+import com.pr.automation.config.properties.SlackProperties;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.context.annotation.Bean;
@@ -17,24 +19,8 @@ public class RestTemplateConfig {
     // 외부 API 무한 대기 방지용 connect 타임아웃(공통). read 타임아웃은 대상별 지연 편차가 커 각 env로 분리
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
 
-    private final LlmProperties llmProperties;
     private final GithubProperties githubProperties;
     private final SlackProperties slackProperties;
-
-    @Bean
-    public RestTemplate llmRestTemplate(RestTemplateBuilder builder) {
-        RestTemplate rt = builder
-                .setConnectTimeout(CONNECT_TIMEOUT)
-                .setReadTimeout(Duration.ofMillis(llmProperties.getReadTimeoutMs()))
-                .build();
-        rt.setUriTemplateHandler(new DefaultUriBuilderFactory(llmProperties.getBaseUrl()));
-        rt.getInterceptors().add((request, body, execution) -> {
-            request.getHeaders().set(HttpHeaders.AUTHORIZATION, "Bearer " + llmProperties.getApiKey());
-            request.getHeaders().set(HttpHeaders.USER_AGENT, "pr-comment-analyzer/1.0");
-            return execution.execute(request, body);
-        });
-        return rt;
-    }
 
     @Bean
     public RestTemplate githubRestTemplate(RestTemplateBuilder builder) {

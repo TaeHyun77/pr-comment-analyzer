@@ -24,7 +24,24 @@ public class WebhookPayload {
 
     private Issue issue;
 
+    private Review review;
+
     private Repository repository;
+
+    // pull_request_review 이벤트의 리뷰 객체. 인라인 코멘트 목록은 포함되지 않고 총평 본문과 상태만 담긴다
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class Review {
+        private long id;
+        private String body; // Approve만 눌렀거나 단일 코멘트로 생성된 리뷰면 빈 문자열
+        private String state; // approved / changes_requested / commented / dismissed
+        private User user;
+
+        @JsonProperty("html_url")
+        private String htmlUrl;
+    }
 
     @Getter
     @Setter
@@ -38,6 +55,11 @@ public class WebhookPayload {
         @JsonProperty("diff_hunk")
         private String diffHunk;
         private Integer line;
+
+        // "line"=특정 라인 대상, "file"=파일 전체 대상.
+        // 파일 전체 대상이어도 line에 1이 채워져 오므로, 둘을 구분할 수 있는 유일한 필드다
+        @JsonProperty("subject_type")
+        private String subjectType;
 
         // 코멘트가 달린 diff 쪽: RIGHT=변경 후(head), LEFT=변경 전(base, 삭제된 라인)
         private String side;
@@ -54,6 +76,10 @@ public class WebhookPayload {
 
         @JsonProperty("in_reply_to_id")
         private Long inReplyToId;
+
+        // commit_comment에서 코멘트가 달린 커밋 SHA — 소속 PR 역추적과 파일 조회 기준으로 사용
+        @JsonProperty("commit_id")
+        private String commitId;
     }
 
     @Getter
@@ -66,6 +92,9 @@ public class WebhookPayload {
         private String body;
         private User user;
         private Head head;
+
+        // Draft PR은 아직 완성 전이라 리뷰 대상에서 제외한다 — GitHub는 Draft로 열어도 opened를 보내므로 이 값으로만 걸러진다
+        private Boolean draft;
 
         @JsonProperty("html_url")
         private String htmlUrl;

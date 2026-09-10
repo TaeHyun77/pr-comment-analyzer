@@ -1,7 +1,7 @@
 package com.pr.automation.webhook;
 
-import com.pr.automation.common.error.AutomationException;
-import com.pr.automation.config.GithubProperties;
+import com.pr.automation.error.AutomationException;
+import com.pr.automation.config.properties.GithubProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 
@@ -20,7 +20,7 @@ class GithubWebhookVerifierTest {
             "sha256=757107ea0eb2509fc211221cce984b8a37570b6d7586c22c46f4379c8b043e17";
 
     private GithubWebhookVerifier verifier(String secret) {
-        return new GithubWebhookVerifier(new GithubProperties("token", "me", secret, null, null, 3, 10000));
+        return new GithubWebhookVerifier(new GithubProperties("token", "me", secret, null, 3, 10000));
     }
 
     @Test
