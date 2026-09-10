@@ -1,8 +1,8 @@
 package com.pr.automation.webhook;
 
-import com.pr.automation.common.error.AutomationException;
-import com.pr.automation.common.error.ErrorCode;
-import com.pr.automation.config.GithubProperties;
+import com.pr.automation.error.AutomationException;
+import com.pr.automation.error.ErrorCode;
+import com.pr.automation.config.properties.GithubProperties;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;

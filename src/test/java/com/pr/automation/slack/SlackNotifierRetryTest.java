@@ -1,10 +1,10 @@
 package com.pr.automation.slack;
 
-import com.pr.automation.analysis.dto.AnalysisResult;
-import com.pr.automation.analysis.dto.CommentEvent;
-import com.pr.automation.common.error.AutomationException;
-import com.pr.automation.common.error.ErrorCode;
-import com.pr.automation.config.SlackProperties;
+import com.pr.automation.analysis.comment.dto.AnalysisResult;
+import com.pr.automation.analysis.comment.dto.CommentEvent;
+import com.pr.automation.error.AutomationException;
+import com.pr.automation.error.ErrorCode;
+import com.pr.automation.config.properties.SlackProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -41,7 +41,7 @@ class SlackNotifierRetryTest {
             .commentBody("코멘트")
             .build();
     private static final AnalysisResult RESULT =
-            new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변");
+            new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null, null, null, null);
 
     private RestTemplate restTemplate;
     private TestSlackNotifier notifier;

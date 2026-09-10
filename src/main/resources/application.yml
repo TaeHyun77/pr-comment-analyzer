@@ -4,7 +4,6 @@ spring:
   jackson:
     default-property-inclusion: non_null
   datasource:
-    # 인프라 값은 기본값 유지. 로컬 bootRun 시 compose mysql(13306)만 띄우면 됨
     url: ${DB_URL:jdbc:mysql://localhost:13306/automation?serverTimezone=UTC&characterEncoding=UTF-8}
     username: ${DB_USERNAME:automation}
     password: ${DB_PASSWORD:automation}
@@ -20,7 +19,6 @@ spring:
 server:
   port: ${SERVER_PORT:8080}
 
-# 앱 설정 변수는 기본값 없이 env로만 주입 (누락 시 부팅 실패) — 값은 .env / .env.example 참조
 github:
   token: ${GITHUB_TOKEN}
   login: ${GITHUB_LOGIN}
@@ -28,22 +26,15 @@ github:
   repos: ${GITHUB_REPOS}
   fetch-max-attempts: ${GITHUB_FETCH_MAX_ATTEMPTS}
   read-timeout-ms: ${GITHUB_READ_TIMEOUT_MS}
-  webhook-recovery:
-    enabled: ${GITHUB_WEBHOOK_RECOVERY_ENABLED:true}
-    lookback-hours: ${GITHUB_WEBHOOK_RECOVERY_LOOKBACK_HOURS:24}
-    scheduler-enabled: ${GITHUB_WEBHOOK_RECOVERY_SCHEDULER_ENABLED:true}
-    scheduler-interval-ms: ${GITHUB_WEBHOOK_RECOVERY_SCHEDULER_INTERVAL_MS:1800000}
-    scheduler-lookback-hours: ${GITHUB_WEBHOOK_RECOVERY_SCHEDULER_LOOKBACK_HOURS:1}
-    max-redeliver-attempts: ${GITHUB_WEBHOOK_RECOVERY_MAX_REDELIVER_ATTEMPTS:5}
 
-llm:
-  api-key: ${LLM_API_KEY}
-  base-url: ${LLM_BASE_URL}
-  model: ${LLM_MODEL}
-  max-tokens: ${LLM_MAX_TOKENS}
-  temperature: ${LLM_TEMPERATURE}
-  read-timeout-ms: ${LLM_READ_TIMEOUT_MS}
-  max-attempts: ${LLM_MAX_ATTEMPTS}
+claude-cli:
+  timeout-ms: ${CLAUDE_CLI_TIMEOUT_MS:120000}
+  max-attempts: ${CLAUDE_CLI_MAX_ATTEMPTS:3}
+  model: ${CLAUDE_CLI_MODEL:sonnet}
+  effort: ${CLAUDE_CLI_EFFORT:high}
+  # 네이티브 도구 모드 전용 - 읽기 전용 도구만 허용하고 비용으로 상한을 건다
+  allowed-tools: ${CLAUDE_CLI_ALLOWED_TOOLS:Read Grep Glob}
+  max-budget-usd: ${CLAUDE_CLI_MAX_BUDGET_USD:0.5}
 
 slack:
   enabled: ${SLACK_ENABLED}
@@ -51,21 +42,21 @@ slack:
   max-attempts: ${SLACK_MAX_ATTEMPTS}
   read-timeout-ms: ${SLACK_READ_TIMEOUT_MS}
 
-pr-analyzer:
-  enabled: ${PR_ANALYZER_ENABLED}
-  include-own-comments: ${PR_ANALYZER_INCLUDE_OWN_COMMENTS}
-  max-tool-iterations: ${PR_ANALYZER_MAX_TOOL_ITERATIONS}
-  max-files: ${PR_ANALYZER_MAX_FILES}
-  max-file-chars: ${PR_ANALYZER_MAX_FILE_CHARS}
-  max-dir-entries: ${PR_ANALYZER_MAX_DIR_ENTRIES}
-  lease-timeout-minutes: ${PR_ANALYZER_LEASE_TIMEOUT_MINUTES}
+comment-analyzer:
+  enabled: ${COMMENT_ANALYZER_ENABLED}
+  include-own-comments: ${COMMENT_ANALYZER_INCLUDE_OWN_COMMENTS}
+  max-file-chars: ${COMMENT_ANALYZER_MAX_FILE_CHARS:25000}
+  notify-retry-delay-minutes: ${COMMENT_ANALYZER_NOTIFY_RETRY_DELAY_MINUTES}
+  retry-max-attempts: ${COMMENT_ANALYZER_RETRY_MAX_ATTEMPTS:3}
+  retry-batch-size: ${COMMENT_ANALYZER_RETRY_BATCH_SIZE:20}
+  # 재시도 주기. FAILED에는 별도 백오프가 없어 이 값이 곧 재시도 간격이 된다
+  retry-interval-ms: ${COMMENT_ANALYZER_RETRY_INTERVAL_MS:300000}
 
 pr-review:
   enabled: ${PR_REVIEW_ENABLED}
   max-files: ${PR_REVIEW_MAX_FILES}
   max-patch-chars: ${PR_REVIEW_MAX_PATCH_CHARS}
   post-to-slack: ${PR_REVIEW_POST_TO_SLACK}
-  lease-timeout-minutes: ${PR_REVIEW_LEASE_TIMEOUT_MINUTES}
 
 logging:
   level:
