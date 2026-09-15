@@ -28,13 +28,11 @@ github:
   read-timeout-ms: ${GITHUB_READ_TIMEOUT_MS}
 
 claude-cli:
-  timeout-ms: ${CLAUDE_CLI_TIMEOUT_MS:120000}
   max-attempts: ${CLAUDE_CLI_MAX_ATTEMPTS:3}
   model: ${CLAUDE_CLI_MODEL:sonnet}
   effort: ${CLAUDE_CLI_EFFORT:high}
-  # 네이티브 도구 모드 전용 - 읽기 전용 도구만 허용하고 비용으로 상한을 건다
+  # 네이티브 도구 모드 전용 - 읽기 전용 도구만 허용한다
   allowed-tools: ${CLAUDE_CLI_ALLOWED_TOOLS:Read Grep Glob}
-  max-budget-usd: ${CLAUDE_CLI_MAX_BUDGET_USD:0.5}
 
 slack:
   enabled: ${SLACK_ENABLED}
@@ -54,9 +52,6 @@ comment-analyzer:
 
 pr-review:
   enabled: ${PR_REVIEW_ENABLED}
-  max-files: ${PR_REVIEW_MAX_FILES}
-  max-patch-chars: ${PR_REVIEW_MAX_PATCH_CHARS}
-  post-to-slack: ${PR_REVIEW_POST_TO_SLACK}
 
 logging:
   level:

@@ -6,7 +6,7 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
-// 한 단계(혹은 최종 종합)가 발견한 개별 이슈 하나를 표현하는 DTO
+// AI 리뷰 결과 JSON에서 이슈 한 건 (파일, 줄, 심각도, 분류, 제목, 설명, 제안)을 담는 DTO
 @Getter
 @Builder
 @NoArgsConstructor

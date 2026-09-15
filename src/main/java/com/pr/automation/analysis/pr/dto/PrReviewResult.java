@@ -11,7 +11,7 @@ import lombok.Setter;
 
 import java.util.List;
 
-// PR 리뷰 에이전트가 submit_review로 제출하는 최종 결과
+// PR 리뷰 에이전트가 마지막에 출력한 결과 JSON을 파싱해 담는 DTO
 @Getter
 @Setter
 @Builder
@@ -22,7 +22,7 @@ public class PrReviewResult {
     @JsonProperty("overall_summary")
     private String overallSummary;
 
-    // submit_review 도구의 "findings" 필드로 수신 후 mergedFindings에 매핑
+    // 에이전트가 출력한 JSON의 "findings"로 수신 후 mergedFindings에 매핑
     @JsonProperty("findings")
     private List<ReviewFinding> findings;
 
@@ -32,8 +32,6 @@ public class PrReviewResult {
     @JsonProperty("reviewer_focus_notes")
     private String reviewerFocusNotes;
 
-    // 운영 메타데이터 — Claude 응답이 아닌 파이프라인에서 채워짐
-    private Integer roundsUsed;
-    private Integer filesReadCount;
+    // 토큰 사용량. 에이전트 응답이 아니라 CLI 실행 결과에서 채워진다
     private LlmUsage usage;
 }

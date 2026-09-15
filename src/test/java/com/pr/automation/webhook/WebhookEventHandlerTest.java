@@ -58,7 +58,7 @@ class WebhookEventHandlerTest {
                 commentStore,
                 slackNotifier,
                 prReviewService,
-                new PrReviewProperties(true, 50, 6000, false),
+                new PrReviewProperties(true),
                 githubClient);
     }
 
@@ -196,7 +196,7 @@ class WebhookEventHandlerTest {
                 commentStore,
                 slackNotifier,
                 prReviewService,
-                new PrReviewProperties(true, 50, 6000, false),
+                new PrReviewProperties(true),
                 githubClient);
         assertThat(h.extract("pull_request_review_comment",
                 bytes(reviewCommentPayload("myname", "myname", "User", "created")))).isEmpty();
@@ -307,7 +307,7 @@ class WebhookEventHandlerTest {
                 commentStore,
                 slackNotifier,
                 prReviewService,
-                new PrReviewProperties(true, 50, 6000, false),
+                new PrReviewProperties(true),
                 githubClient);
         assertThat(noRepos.extract("pull_request_review_comment",
                 bytes(reviewCommentPayload("myname", "reviewer", "User", "created")))).isEmpty();
@@ -489,7 +489,7 @@ class WebhookEventHandlerTest {
                 commentStore,
                 slackNotifier,
                 prReviewService,
-                new PrReviewProperties(true, 50, 6000, false),
+                new PrReviewProperties(true),
                 githubClient);
 
         off.handle("commit_comment", "delivery-off", bytes(commitCommentPayload("reviewer", "User")));
@@ -576,7 +576,7 @@ class WebhookEventHandlerTest {
                 commentStore,
                 slackNotifier,
                 prReviewService,
-                new PrReviewProperties(false, 50, 6000, false),
+                new PrReviewProperties(false),
                 githubClient);
         assertThat(disabled.extractPullRequest(bytes(pullRequestPayload("myname", "User", "opened")))).isEmpty();
     }

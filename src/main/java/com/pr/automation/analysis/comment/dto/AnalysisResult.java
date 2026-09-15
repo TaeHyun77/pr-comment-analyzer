@@ -9,7 +9,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-// LLM이 submit_analysis 도구로 제출하는 최종 분석 결과를 담는 DTO
+// 에이전트가 마지막에 출력한 결과 JSON을 파싱해 담는 DTO
 @Getter
 @Builder
 @NoArgsConstructor
@@ -32,13 +32,7 @@ public class AnalysisResult {
     @JsonProperty("suggested_reply")
     private String suggestedReply; // 리뷰어 코멘트에 달 답변 초안
 
-    // 운영 메타데이터 — Claude 응답이 아닌 에이전트에서 채워짐
-    @Setter private Integer roundsUsed;
-    @Setter private Integer filesReadCount;
-
-    // 토큰 사용량(비용 포함). 비용은 모델/요금제에 따라 변하는 파생값이라 토큰을 기본 지표로 본다
+    // 토큰 사용량(비용 포함). 에이전트 응답이 아니라 CLI 실행 결과에서 채워진다
+    // 비용은 모델/요금제에 따라 변하는 파생값이라 토큰을 기본 지표로 본다
     @Setter private LlmUsage usage;
-
-    // 이 분석에 허용된 누적 토큰 상한. 0 이하면 예산 제한 없음
-    @Setter private Long tokenBudget;
 }

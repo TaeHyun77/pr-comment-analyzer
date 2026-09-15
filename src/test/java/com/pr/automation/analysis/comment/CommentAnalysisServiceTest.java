@@ -73,7 +73,7 @@ class CommentAnalysisServiceTest {
 
     @Test
     void 미처리_코멘트는_분석후_Slack전송하고_처리기록한다() {
-        AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null, null, null, null);
+        AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null);
         when(store.tryClaim(any(CommentEvent.class))).thenReturn(true);
         when(analysisAgent.analyze(any(CommentContext.class), any())).thenReturn(result);
 
@@ -114,7 +114,7 @@ class CommentAnalysisServiceTest {
 
     @Test
     void 리뷰코멘트는_해당_파일의_전체_patch를_컨텍스트에_담는다() {
-        AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null, null, null, null);
+        AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null);
         when(store.tryClaim(any(CommentEvent.class))).thenReturn(true);
         when(analysisAgent.analyze(any(CommentContext.class), any())).thenReturn(result);
         String fooPatch = "@@ -1,3 +1,4 @@\n+x\n@@ -50,2 +51,3 @@\n+y";
@@ -131,7 +131,7 @@ class CommentAnalysisServiceTest {
 
     @Test
     void 변경파일_목록에_코멘트_파일이_없으면_filePatch는_null이고_분석은_계속된다() {
-        AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null, null, null, null);
+        AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null);
         when(store.tryClaim(any(CommentEvent.class))).thenReturn(true);
         when(analysisAgent.analyze(any(CommentContext.class), any())).thenReturn(result);
         when(githubClient.fetchPullFiles("me/repo", 7)).thenReturn(Optional.of(Arrays.asList(
@@ -148,7 +148,7 @@ class CommentAnalysisServiceTest {
 
     @Test
     void 분석성공후_Slack실패시_결과를_저장하고_완료처리는_하지_않는다() {
-        AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null, null, null, null);
+        AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null);
         when(store.tryClaim(any(CommentEvent.class))).thenReturn(true);
         when(analysisAgent.analyze(any(CommentContext.class), any())).thenReturn(result);
         doThrow(new RuntimeException("slack down")).when(slackNotifier).send(any(), any());
@@ -166,7 +166,7 @@ class CommentAnalysisServiceTest {
 
     @Test
     void 저장된_분석결과가_있으면_LLM없이_통지만_재시도한다() throws Exception {
-        AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null, null, null, null);
+        AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null);
         String savedJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(result);
         when(store.tryClaim(any(CommentEvent.class))).thenReturn(true);
         when(store.findAnalyzedResult(555L)).thenReturn(Optional.of(savedJson));
@@ -179,10 +179,10 @@ class CommentAnalysisServiceTest {
     }
 
     @Test
-    void 저장된_결과의_토큰_사용량과_예산이_복원된다() throws Exception {
+    void 저장된_결과의_토큰_사용량이_복원된다() throws Exception {
         // 통지 재시도 시 사용량 표기가 사라지지 않아야 한다 — LlmUsage가 불변 객체라 역직렬화 경로가 별도로 필요함
         AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변",
-                3, 2, new LlmUsage(100L, 200L, 300L, 40L, 1706L, 0.0758), 400000L);
+                new LlmUsage(100L, 200L, 300L, 40L, 1706L, 0.0758));
         com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
         String savedJson = mapper.writeValueAsString(result);
         when(store.tryClaim(any(CommentEvent.class))).thenReturn(true);
@@ -197,13 +197,11 @@ class CommentAnalysisServiceTest {
         assertThat(restored.getUsage()).isNotNull();
         assertThat(restored.getUsage().getTotalTokens()).isEqualTo(640L);
         assertThat(restored.getUsage().getCostUsd()).isEqualTo(0.0758);
-        assertThat(restored.getTokenBudget()).isEqualTo(400000L);
-        assertThat(restored.getRoundsUsed()).isEqualTo(3);
     }
 
     @Test
     void 저장된_결과가_깨졌으면_신규_분석을_수행한다() {
-        AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null, null, null, null);
+        AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null);
         when(store.tryClaim(any(CommentEvent.class))).thenReturn(true);
         when(store.findAnalyzedResult(555L)).thenReturn(Optional.of("{깨진 json"));
         when(analysisAgent.analyze(any(CommentContext.class), any())).thenReturn(result);
@@ -218,7 +216,7 @@ class CommentAnalysisServiceTest {
     @Test
     void 변경파일_조회가_실패해도_filePatch_없이_분석은_계속된다() {
         // patch는 보조 맥락이므로 조회 실패(empty)를 실패로 승격하지 않음 — PR 리뷰 경로와 다른 점
-        AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null, null, null, null);
+        AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null);
         when(store.tryClaim(any(CommentEvent.class))).thenReturn(true);
         when(analysisAgent.analyze(any(CommentContext.class), any())).thenReturn(result);
         when(githubClient.fetchPullFiles("me/repo", 7)).thenReturn(Optional.empty());
@@ -249,7 +247,7 @@ class CommentAnalysisServiceTest {
                 .startLine(85)
                 .originalLine(88)
                 .build();
-        AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null, null, null, null);
+        AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null);
         when(store.tryClaim(any(CommentEvent.class))).thenReturn(true);
         when(analysisAgent.analyze(any(CommentContext.class), any())).thenReturn(result);
 
@@ -274,7 +272,7 @@ class CommentAnalysisServiceTest {
                 .commentId(559L)
                 .commentBody("일반 코멘트")
                 .build();
-        AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null, null, null, null);
+        AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null);
         when(store.tryClaim(any(CommentEvent.class))).thenReturn(true);
         when(githubClient.fetchPullHeadSha("me/repo", 7)).thenReturn(Optional.of("shaABC"));
         when(analysisAgent.analyze(any(CommentContext.class), any())).thenReturn(result);
@@ -299,7 +297,7 @@ class CommentAnalysisServiceTest {
                 .commentAuthor("user")
                 .commentHtmlUrl("url")
                 .build();
-        AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null, null, null, null);
+        AnalysisResult result = new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null);
         when(store.tryClaim(any(CommentEvent.class))).thenReturn(true);
         when(githubClient.fetchPullHeadSha("me/repo", 7)).thenReturn(Optional.of("shaABC"));
         when(analysisAgent.analyze(any(CommentContext.class), any())).thenReturn(result);

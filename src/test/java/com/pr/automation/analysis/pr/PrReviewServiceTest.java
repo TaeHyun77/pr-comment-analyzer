@@ -3,13 +3,11 @@ package com.pr.automation.analysis.pr;
 import com.pr.automation.analysis.pr.agent.PrReviewAgent;
 import com.pr.automation.analysis.pr.dto.PrReviewEvent;
 import com.pr.automation.analysis.pr.dto.PrReviewResult;
-import com.pr.automation.config.properties.PrReviewProperties;
 import com.pr.automation.error.AutomationException;
 import com.pr.automation.error.ErrorCode;
 import com.pr.automation.github.GithubClient;
 import com.pr.automation.github.RepoCheckout;
 import com.pr.automation.github.RepoCheckoutFactory;
-import com.pr.automation.slack.SlackNotifier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -19,11 +17,11 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -41,7 +39,6 @@ class PrReviewServiceTest {
     private PrReviewAgent reviewAgent;
     private PrReviewCommentFormatter formatter;
     private RepoCheckoutFactory checkoutFactory;
-    private SlackNotifier slackNotifier;
     private PrReviewService service;
 
     @BeforeEach
@@ -53,9 +50,8 @@ class PrReviewServiceTest {
         RepoCheckout checkout = mock(RepoCheckout.class);
         when(checkout.dir()).thenReturn(Paths.get("."));
         when(checkoutFactory.checkout(any(), any())).thenReturn(checkout);
-        slackNotifier = mock(SlackNotifier.class);
         when(githubClient.isEnabled()).thenReturn(true);
-        service = newService(new PrReviewProperties(true, 30, 8000, false));
+        service = new PrReviewService(githubClient, reviewAgent, formatter, checkoutFactory);
     }
 
     @Test
@@ -65,7 +61,6 @@ class PrReviewServiceTest {
         service.reviewAsync(EVENT);
 
         verify(githubClient).createIssueComment("me/repo", 7, "리뷰 본문");
-        verify(slackNotifier, never()).sendPrReviewFailure(any(), any());
     }
 
     @Test
@@ -82,7 +77,7 @@ class PrReviewServiceTest {
     }
 
     @Test
-    void 마커_조회_실패시_게시하지_않고_실패를_알린다() {
+    void 마커_조회_실패시_리뷰도_게시도_하지_않는다() {
         // "모르면 게시하지 않는다"(fail-closed)
         stubNewReview();
         when(githubClient.hasIssueCommentWithMarker("me/repo", 7, PrReviewCommentFormatter.MARKER))
@@ -92,19 +87,17 @@ class PrReviewServiceTest {
 
         verify(reviewAgent, never()).review(any(), any(), any());
         verify(githubClient, never()).createIssueComment(anyString(), anyInt(), anyString());
-        verify(slackNotifier).sendPrReviewFailure(eq(EVENT), any());
     }
 
     @Test
-    void 변경파일_조회_실패시_실패를_알린다() {
-        // 조회 실패(empty)는 "변경 없음"과 달리 실패로 다뤄야 원인을 알 수 있다
+    void 변경파일_조회_실패시_리뷰하지_않는다() {
+        // 조회 실패(empty)를 "변경 없음"으로 착각해 빈 리뷰를 진행하면 안 된다
         when(githubClient.fetchPullFiles("me/repo", 7)).thenReturn(Optional.empty());
 
         service.reviewAsync(EVENT);
 
         verify(reviewAgent, never()).review(any(), any(), any());
         verify(githubClient, never()).createIssueComment(anyString(), anyInt(), anyString());
-        verify(slackNotifier).sendPrReviewFailure(eq(EVENT), any());
     }
 
     @Test
@@ -115,35 +108,17 @@ class PrReviewServiceTest {
 
         verify(reviewAgent, never()).review(any(), any(), any());
         verify(githubClient, never()).createIssueComment(anyString(), anyInt(), anyString());
-        verify(slackNotifier, never()).sendPrReviewFailure(any(), any());
     }
 
     @Test
-    void 리뷰_도중_실패하면_게시하지_않고_실패를_알린다() {
+    void 리뷰_도중_실패해도_예외를_밖으로_던지지_않고_게시하지_않는다() {
+        // 비동기 스레드의 예외는 호출자에게 닿지 않으므로 서비스 안에서 로그로 남기고 끝낸다
         stubNewReview();
         when(reviewAgent.review(any(), any(), any())).thenThrow(new RuntimeException("에이전트 실패"));
 
-        service.reviewAsync(EVENT);
+        assertThatCode(() -> service.reviewAsync(EVENT)).doesNotThrowAnyException();
 
         verify(githubClient, never()).createIssueComment(anyString(), anyInt(), anyString());
-        verify(slackNotifier).sendPrReviewFailure(eq(EVENT), any());
-    }
-
-    @Test
-    void 보조_Slack_실패는_게시를_무효화하지_않는다() {
-        // PR 코멘트 게시(본질 산출물)가 끝난 뒤라 실패로 되돌릴 수 없다
-        PrReviewService svc = newService(new PrReviewProperties(true, 30, 8000, true));
-        stubNewReview();
-        doThrow(new RuntimeException("slack down")).when(slackNotifier).sendPrReview(any(), any());
-
-        svc.reviewAsync(EVENT);
-
-        verify(githubClient).createIssueComment("me/repo", 7, "리뷰 본문");
-        verify(slackNotifier, never()).sendPrReviewFailure(any(), any());
-    }
-
-    private PrReviewService newService(PrReviewProperties properties) {
-        return new PrReviewService(githubClient, reviewAgent, formatter, slackNotifier, properties, checkoutFactory);
     }
 
     // 신규 리뷰 정상 경로의 공통 스텁: 변경 파일 1개 + 에이전트 결과 + 포맷팅
