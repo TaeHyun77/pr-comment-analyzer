@@ -23,7 +23,7 @@ public class CommentAnalysisPromptBuilder {
 
     private static final int PR_BODY_LIMIT = 1_500; // PR 본문 설명 길이 제한
     private static final int CODE_LIMIT = 6_000; // 코멘트 주변 코드 맥락 길이 제한
-    private static final int FILE_PATCH_LIMIT = 6_000; // 파일 전체 변경 diff 길이 제한
+    private static final int FILE_PATCH_LIMIT = 50_000;
     private static final int PARENT_BODY_LIMIT = 500; // 이전 스레드 코멘트 1건당 길이 제한
     private static final int MAX_THREAD_COMMENTS = 20; // 이전 스레드가 비정상적으로 길 때 토큰 폭주 방지 (오래된 것부터 절단)
     private static final String EVENT_REVIEW_BODY = "review_body";
@@ -99,11 +99,7 @@ public class CommentAnalysisPromptBuilder {
 
         sb.append("\n[관련 코드/맥락]\n").append(abbreviate(orDash(c.getCodeContext()), CODE_LIMIT)).append('\n');
 
-        if (StringUtils.hasText(c.getFilePatch())) {
-            sb.append("\n[이 파일의 전체 변경 diff]\n")
-                    .append("이 PR에서 이 파일에 일어난 모든 변경이다. hunk 헤더 @@ -a,b +c,d @@의 -는 변경 전, +는 변경 후 라인 번호다.\n")
-                    .append("```diff\n").append(abbreviate(c.getFilePatch(), FILE_PATCH_LIMIT)).append("\n```\n");
-        }
+        appendFilePatch(sb, c);
 
         appendParentThread(sb, c.getParentComments());
 
@@ -111,6 +107,32 @@ public class CommentAnalysisPromptBuilder {
 
         appendPrimaryFile(sb, c, primaryFileContent, primaryTruncated);
         return sb.toString();
+    }
+
+    // 변경 diff는 base가 체크아웃에 없어 에이전트가 스스로 복원할 수 없는 유일한 정보입니다.
+    // 잘렸거나 확보하지 못한 사실을 알리지 않으면 모델이 남은 조각을 전부로 믿고 "다른 변경 없음"으로 단정하도록 합니다.
+    private static void appendFilePatch(StringBuilder sb, CommentContext c) {
+        // 파일이 없는 코멘트(PR 일반 코멘트, 리뷰 총평)는 diff 개념 자체가 없으므로 섹션을 만들지 않는다
+        if (!StringUtils.hasText(c.getFilePath())) {
+            return;
+        }
+
+        sb.append("\n[이 파일의 전체 변경 diff]\n");
+
+        String patch = c.getFilePatch();
+        if (!StringUtils.hasText(patch)) {
+            sb.append("확보하지 못했다 — 바이너리이거나 변경이 너무 커서 GitHub이 diff를 주지 않았다.\n")
+                    .append("체크아웃에는 변경 후(head) 코드만 있어 삭제된 코드는 어디서도 확인할 수 없다.\n")
+                    .append("삭제된 코드가 판정의 근거가 되어야 한다면 추측하지 말고 확인 불가로 판정해라.\n");
+            return;
+        }
+
+        sb.append(patch.length() > FILE_PATCH_LIMIT
+                        ? "이 파일 변경 중 앞 " + FILE_PATCH_LIMIT + "자만 실었다(전체 " + patch.length()
+                                + "자). 뒤쪽 변경이 잘려 있으니 다른 변경이 없다고 단정하지 마라.\n"
+                        : "이 PR에서 이 파일에 일어난 모든 변경이다.\n")
+                .append("hunk 헤더 @@ -a,b +c,d @@의 -는 변경 전, +는 변경 후 라인 번호다.\n")
+                .append("```diff\n").append(abbreviate(patch, FILE_PATCH_LIMIT)).append("\n```\n");
     }
 
     // 답글의 선행 댓글들(오래된→최신 순)을 렌더링
@@ -132,12 +154,10 @@ public class CommentAnalysisPromptBuilder {
 
     // 라인 번호가 어느 버전(head/base/과거 diff) 기준인지 명시해 잘못된 참조를 막음
     private static void appendLineAnchor(StringBuilder sb, CommentContext c) {
-        // 파일 전체 대상 코멘트는 line이 1로 채워져 오므로, 라인 표기를 하면 1번 줄 지적으로 오독된다
         if (c.isFileLevel()) {
             sb.append(" (파일 전체를 대상으로 달린 코멘트 — 특정 라인 지적이 아니다)");
             return;
         }
-        // 커밋 코멘트의 라인은 PR 누적 diff가 아니라 그 커밋 하나를 기준으로 매겨진다
         if (EVENT_COMMIT_COMMENT.equals(c.getEventType())) {
             if (c.getLine() != null) {
                 sb.append(" (커밋 ").append(shortSha(c.getHeadSha()))
@@ -170,8 +190,8 @@ public class CommentAnalysisPromptBuilder {
         return sha.length() > SHORT_SHA_LENGTH ? sha.substring(0, SHORT_SHA_LENGTH) : sha;
     }
 
-    // 절단 기준 라인, head 기준 line을 우선.
-    // 파일 전체 대상 코멘트는 line(=1) 주변으로 자르면 파일 앞머리만 남으므로 앵커 없이 앞에서부터 자르게 한다
+    // 절단 기준 라인, head 기준 line을 우선
+    // 파일 전체 대상 코멘트는 line(=1) 주변으로 자르면 파일 앞머리만 남으므로 앵커 없이 앞에서부터 자르게 합니다.
     private static Integer anchorLine(CommentContext c) {
         if (c.isFileLevel()) return null;
         if (c.getLine() != null) return c.getLine();
