@@ -1,12 +1,10 @@
 package com.pr.automation.analysis.comment.agent;
 
-import com.pr.automation.analysis.comment.agent.CommentAnalysisPromptBuilder;
 import com.pr.automation.analysis.comment.dto.CommentContext;
 import com.pr.automation.github.RepoFileReader;
 import com.pr.automation.config.properties.CommentAnalyzerProperties;
 import org.junit.jupiter.api.Test;
 
-import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -17,17 +15,7 @@ class CommentAnalysisPromptBuilderTest {
             new CommentAnalysisPromptBuilder(new CommentAnalyzerProperties(true, 25000, true, 25, 3, 20));
 
     // 파일 프리페치 없이 프롬프트 본문만 검증하기 위한 빈 reader
-    private static final RepoFileReader EMPTY_READER = new RepoFileReader() {
-        @Override
-        public Optional<String> readFile(String path) {
-            return Optional.empty();
-        }
-
-        @Override
-        public Optional<List<String>> listDirectory(String path) {
-            return Optional.empty();
-        }
-    };
+    private static final RepoFileReader EMPTY_READER = path -> Optional.empty();
 
     private CommentContext.CommentContextBuilder reviewContext() {
         return CommentContext.builder()
@@ -70,10 +58,7 @@ class CommentAnalysisPromptBuilderTest {
 
     @Test
     void 커밋_코멘트도_파일_경로와_본문이_프롬프트에_들어간다() {
-        RepoFileReader reader = new RepoFileReader() {
-            @Override public Optional<String> readFile(String path) { return Optional.of("package a;\nclass Foo {}\n"); }
-            @Override public Optional<List<String>> listDirectory(String path) { return Optional.empty(); }
-        };
+        RepoFileReader reader = path -> Optional.of("package a;\nclass Foo {}\n");
         String prompt = builder.buildInitial(
                 reviewContext().eventType("commit_comment").headSha("deadbeef1234").line(11).build(), reader);
 
@@ -119,9 +104,34 @@ class CommentAnalysisPromptBuilderTest {
     }
 
     @Test
-    void filePatch가_없으면_전체_변경_diff_섹션을_생략한다() {
+    void filePatch가_없으면_확보하지_못했음을_명시한다() {
         String prompt = builder.buildInitial(reviewContext().line(10).build(), EMPTY_READER);
+        assertThat(prompt).contains("[이 파일의 전체 변경 diff]");
+        assertThat(prompt).contains("확보하지 못했다");
+        // 근거가 없는데 단정하지 않도록 판정 지침까지 함께 전달돼야 한다
+        assertThat(prompt).contains("확인 불가로 판정해라");
+        assertThat(prompt).doesNotContain("모든 변경이다");
+    }
+
+    @Test
+    void 파일이_없는_코멘트는_diff_섹션_자체를_만들지_않는다() {
+        String prompt = builder.buildInitial(
+                CommentContext.builder()
+                        .eventType("issue_comment")
+                        .repoFullName("me/repo")
+                        .prNumber(7)
+                        .commentBody("전반적으로 좋네요")
+                        .build(),
+                EMPTY_READER);
         assertThat(prompt).doesNotContain("[이 파일의 전체 변경 diff]");
+    }
+
+    @Test
+    void 상한_이하_filePatch는_전체임을_명시한다() {
+        String patch = "@@ -1,3 +1,4 @@\n+x";
+        String prompt = builder.buildInitial(reviewContext().line(10).filePatch(patch).build(), EMPTY_READER);
+        assertThat(prompt).contains("이 PR에서 이 파일에 일어난 모든 변경이다");
+        assertThat(prompt).doesNotContain("자만 실었다");
     }
 
     // --- 프리페치 파일 절단 전략 ---
@@ -133,17 +143,7 @@ class CommentAnalysisPromptBuilderTest {
             sb.append(String.format("LINE_%03d", i)).append('\n');
         }
         String content = sb.toString();
-        return new RepoFileReader() {
-            @Override
-            public Optional<String> readFile(String path) {
-                return Optional.of(content);
-            }
-
-            @Override
-            public Optional<List<String>> listDirectory(String path) {
-                return Optional.empty();
-            }
-        };
+        return path -> Optional.of(content);
     }
 
     @Test
@@ -181,14 +181,31 @@ class CommentAnalysisPromptBuilderTest {
     }
 
     @Test
-    void 긴_filePatch는_잘라서_넣는다() {
-        StringBuilder longPatch = new StringBuilder("@@ -1,1 +1,9000 @@\n");
-        for (int i = 0; i < 900; i++) {
-            longPatch.append("+aaaaaaaa").append(i).append('\n');
+    void 상한을_넘는_filePatch는_잘라_넣고_잘렸음을_명시한다() {
+        StringBuilder longPatch = new StringBuilder("@@ -1,1 +1,60000 @@\n");
+        for (int i = 0; i < 6_000; i++) {
+            longPatch.append("+aaaaaaaaaaaaaaaaaaaa").append(i).append('\n');
         }
         longPatch.append("+TAIL_MARKER");
         String prompt = builder.buildInitial(reviewContext().line(10).filePatch(longPatch.toString()).build(), EMPTY_READER);
+
         assertThat(prompt).contains("[이 파일의 전체 변경 diff]");
         assertThat(prompt).doesNotContain("TAIL_MARKER");
+        // 잘렸는데 "모든 변경"이라고 단언하면 모델이 다른 변경이 없다고 오판한다
+        assertThat(prompt).contains("자만 실었다");
+        assertThat(prompt).doesNotContain("이 PR에서 이 파일에 일어난 모든 변경이다");
+    }
+
+    @Test
+    void 실측_분포의_상위값인_2만자_patch는_잘리지_않는다() {
+        StringBuilder patch = new StringBuilder("@@ -1,1 +1,2000 @@\n");
+        for (int i = 0; i < 2_000; i++) {
+            patch.append("+aaaaaa").append(i).append('\n');
+        }
+        patch.append("+TAIL_MARKER");
+        String prompt = builder.buildInitial(reviewContext().line(10).filePatch(patch.toString()).build(), EMPTY_READER);
+
+        assertThat(prompt).contains("TAIL_MARKER");
+        assertThat(prompt).contains("이 PR에서 이 파일에 일어난 모든 변경이다");
     }
 }

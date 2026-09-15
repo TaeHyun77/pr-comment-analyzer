@@ -20,8 +20,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * 체크아웃된 저장소 위에서 Claude Code의 네이티브 도구로 분석을 수행합니다.
@@ -32,7 +30,6 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class CommentAnalysisAgent {
     private static final String SYSTEM_PROMPT = loadPrompt("prompts/comment-analysis-system.md");
-    private static final Pattern CODE_FENCE = Pattern.compile("```(?:json)?\\s*(.*?)```", Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
 
     private final LlmChatClient chatClient;
     private final CommentAnalysisPromptBuilder promptBuilder;
@@ -51,7 +48,7 @@ public class CommentAnalysisAgent {
         return result;
     }
 
-    // 응답 전체가 JSON인 것이 정상이지만, 코드 펜스로 감싸 오는 경우가 있어 한 겹 벗겨냄
+    // 응답 전체가 JSON인 것이 정상이지만, 코드 펜스나 앞뒤 설명이 붙어 오는 경우가 있어 JSON 부분만 꺼냄
     AnalysisResult parseResult(String content) {
         if (!StringUtils.hasText(content)) {
             throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.AI_RESPONSE_PARSE_ERROR, "빈 응답");
@@ -65,10 +62,6 @@ public class CommentAnalysisAgent {
     }
 
     private static String extractJson(String content) {
-        Matcher m = CODE_FENCE.matcher(content);
-        if (m.find()) {
-            return m.group(1).trim();
-        }
         int start = content.indexOf('{');
         int end = content.lastIndexOf('}');
         return (start >= 0 && end > start) ? content.substring(start, end + 1) : content.trim();

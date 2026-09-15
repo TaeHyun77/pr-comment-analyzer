@@ -14,20 +14,17 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
-import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
 
-// PR 코멘트/파일/디렉터리 조회, PR에 코멘트 게시 등 범용 GitHub API 호출을 담당하는 클래스
+// PR 코멘트/변경 파일/PR 메타데이터 조회, PR에 코멘트 게시 등 범용 GitHub API 호출을 담당하는 클래스
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -35,7 +32,7 @@ public class GithubClient {
     private final RestTemplate githubRestTemplate;
     private final GithubProperties githubProperties;
 
-    // 일시 오류 재시도 시작 백오프 — GitHub 순단은 대부분 수 초 내 회복되므로 1s→2s로 짧게 잡음
+    // 일시 오류 재시도 시작 백오프 - GitHub 순단은 대부분 수 초 내 회복되므로 1s→2s로 짧게 잡음
     // 재시도 횟수는 env로 분리, 이걸로도 안 되는 실패는 복구 사이클이 맡음
     private static final long FETCH_INITIAL_BACKOFF_MS = 1000L;
 
@@ -48,7 +45,7 @@ public class GithubClient {
         return StringUtils.hasText(githubProperties.getToken());
     }
 
-    // 리뷰 코멘트 단건을 조회합니다
+    // 리뷰 코멘트 단건을 조회합니다.
     // 답글의 부모 코멘트 내용을 가져와 CommentAnalysisService가 스레드 맥락을 구성할 때 사용
     public Optional<FetchedComment> fetchReviewComment(String repoFullName, long commentId) {
         if (!isEnabled()) return Optional.empty();
@@ -172,58 +169,6 @@ public class GithubClient {
             return Optional.of(pull.getHead().getSha());
         } catch (Exception e) {
             log.warn("GitHub PR head SHA 조회 실패: {} #{}", repoFullName, prNumber, e);
-            return Optional.empty();
-        }
-    }
-
-    // 특정 커밋을 기준으로 레포의 파일 하나의 내용을 읽어옴, 파일이 아닌( 디렉터리/심볼릭링크 등 ) 경로면 empty 반환
-    public Optional<FetchedFile> fetchFileContent(String repoFullName, String path, String ref) {
-        if (!isEnabled()) return Optional.empty();
-
-        String url = buildContentsUrl(repoFullName, path, ref);
-        if (url == null) {
-            return Optional.empty();
-        }
-        try {
-            GhContent content = githubRestTemplate.getForObject(url, GhContent.class);
-            return toFetchedFile(content);
-        } catch (HttpClientErrorException.NotFound e) {
-            return Optional.empty();
-        } catch (Exception e) {
-            log.warn("GitHub 파일 조회 실패: {} path={} ref={}", repoFullName, path, ref, e);
-            return Optional.empty();
-        }
-    }
-
-    // 디렉터리 안의 파일/하위 디렉터리 목록을 가져옵니다. ( path가 빈 문자열이면 레포 루트를 조회 )
-    // 에이전트의 list_directory 도구가 이 메서드를 호출합니다.
-    public Optional<List<DirEntry>> listDirectory(String repoFullName, String path, String ref) {
-        if (!isEnabled()) return Optional.empty();
-
-        String url = buildContentsUrl(repoFullName, path, ref);
-        if (url == null) {
-            return Optional.empty();
-        }
-        try {
-            GhContent[] entries = githubRestTemplate.getForObject(url, GhContent[].class);
-            if (entries == null) {
-                return Optional.of(Collections.emptyList());
-            }
-            List<DirEntry> out = new java.util.ArrayList<>(entries.length);
-            for (GhContent c : entries) {
-                out.add(DirEntry.builder()
-                        .name(c.getName())
-                        .path(c.getPath())
-                        .type(c.getType())
-                        .size(c.getSize() != null ? c.getSize() : 0)
-                        .build()
-                );
-            }
-            return Optional.of(out);
-        } catch (HttpClientErrorException.NotFound e) {
-            return Optional.empty();
-        } catch (Exception e) {
-            log.warn("GitHub 디렉터리 조회 실패: {} path={} ref={}", repoFullName, path, ref, e);
             return Optional.empty();
         }
     }
@@ -509,57 +454,12 @@ public class GithubClient {
         throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR, "커밋 소속 PR 조회 실패 (루프 이탈)");
     }
 
-    // path를 직접 URL에 넣어 슬래시를 보존 (DefaultUriBuilderFactory의 path-var 인코딩 회피)
-    private static String buildContentsUrl(String repoFullName, String path, String ref) {
-        String[] parts = splitRepo(repoFullName);
-        if (parts == null || path == null) {
-            return null;
-        }
-        String normalized = path.startsWith("/") ? path.substring(1) : path;
-        StringBuilder sb = new StringBuilder("/repos/").append(parts[0]).append('/').append(parts[1]).append("/contents");
-        if (!normalized.isEmpty()) {
-            sb.append('/').append(normalized);
-        }
-        if (StringUtils.hasText(ref)) {
-            sb.append("?ref=").append(ref);
-        }
-        return sb.toString();
-    }
-
     private static String[] splitRepo(String repoFullName) {
         if (!StringUtils.hasText(repoFullName)) {
             return null;
         }
         String[] parts = repoFullName.split("/", 2);
         return parts.length == 2 ? parts : null;
-    }
-
-    private static Optional<FetchedFile> toFetchedFile(GhContent content) {
-        if (content == null || !"file".equalsIgnoreCase(content.getType())) {
-            return Optional.empty();
-        }
-        String decoded = decode(content.getContent(), content.getEncoding());
-        return Optional.of(FetchedFile.builder()
-                .path(content.getPath())
-                .size(content.getSize() != null ? content.getSize() : 0)
-                .content(decoded)
-                .build());
-    }
-
-    private static String decode(String raw, String encoding) {
-        if (raw == null) {
-            return "";
-        }
-        if ("base64".equalsIgnoreCase(encoding)) {
-            // GitHub은 base64 줄바꿈을 포함해 줄 수 있으므로 MIME 디코더 사용.
-            try {
-                byte[] bytes = Base64.getMimeDecoder().decode(raw);
-                return new String(bytes, StandardCharsets.UTF_8);
-            } catch (IllegalArgumentException e) {
-                return raw;
-            }
-        }
-        return raw;
     }
 
     // --- 공개 결과 DTO ---
@@ -594,25 +494,6 @@ public class GithubClient {
         private final String title;
         private final String body;
         private final String author;
-    }
-
-    @Getter
-    @Builder
-    @AllArgsConstructor
-    public static class FetchedFile {
-        private final String path;
-        private final int size;
-        private final String content;
-    }
-
-    @Getter
-    @Builder
-    @AllArgsConstructor
-    public static class DirEntry {
-        private final String name;
-        private final String path;
-        private final String type; // "file" | "dir" | "symlink" | "submodule"
-        private final int size;
     }
 
     @Getter
@@ -691,18 +572,6 @@ public class GithubClient {
     @AllArgsConstructor
     public static class GhHead {
         private String sha;
-    }
-
-    @Getter
-    @Setter
-    @NoArgsConstructor
-    public static class GhContent {
-        private String name;
-        private String path;
-        private String type;
-        private Integer size;
-        private String content;
-        private String encoding;
     }
 
     @Getter

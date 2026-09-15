@@ -41,7 +41,7 @@ class SlackNotifierRetryTest {
             .commentBody("코멘트")
             .build();
     private static final AnalysisResult RESULT =
-            new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null, null, null, null);
+            new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null);
 
     private RestTemplate restTemplate;
     private TestSlackNotifier notifier;

@@ -19,7 +19,7 @@ public class CommentContext {
     private final String prTitle;
     private final String prBody;
 
-    private final String headSha; // 코멘트 시점 PR head 커밋 SHA, 자율 파일 조회의 ref(issue_comment면 null)
+    private final String headSha; // 코멘트 시점 PR head 커밋 SHA, 체크아웃 기준 커밋(issue_comment면 null)
     private final String filePath; // 코멘트가 달린 파일 경로
     private final Integer line; // 코멘트가 달린 줄 번호 (outdated 코멘트면 null)
     private final String side; // RIGHT=변경 후(head) 기준, LEFT=변경 전(base) 기준

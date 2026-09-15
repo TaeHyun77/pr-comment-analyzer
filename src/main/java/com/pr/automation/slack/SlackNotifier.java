@@ -6,8 +6,6 @@ import com.pr.automation.error.AutomationException;
 import com.pr.automation.error.ErrorCode;
 import com.pr.automation.llm.dto.LlmUsage;
 import com.pr.automation.config.properties.SlackProperties;
-import com.pr.automation.analysis.pr.dto.PrReviewEvent;
-import com.pr.automation.analysis.pr.dto.PrReviewResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -42,9 +40,17 @@ public class SlackNotifier {
     private final SlackProperties slackProperties;
 
     public void send(CommentEvent event, AnalysisResult result) {
-        if (!slackProperties.isEnabled() || !StringUtils.hasText(slackProperties.getWebhookUrl())) return;
+        if (!slackProperties.isEnabled() || !StringUtils.hasText(slackProperties.getWebhookUrl())) {
+            log.info("Slack 비활성화/미설정 — 분석 결과 통지 생략: {} #{} comment={}",
+                    event.getRepoFullName(), event.getPrNumber(), event.getCommentId());
+            return;
+        }
 
         post(buildPayload(event, result));
+
+        // 성공을 남기지 않으면 통지 여부를 예외가 없었다는 사실로만 추론해야 한다
+        log.info("분석 결과 통지 완료: {} #{} comment={}",
+                event.getRepoFullName(), event.getPrNumber(), event.getCommentId());
     }
 
     /**
@@ -100,7 +106,12 @@ public class SlackNotifier {
 
     // 통지 실패
     public void sendFailure(CommentEvent event, Throwable error) {
-        if (!slackProperties.isEnabled() || !StringUtils.hasText(slackProperties.getWebhookUrl())) return;
+        if (!slackProperties.isEnabled() || !StringUtils.hasText(slackProperties.getWebhookUrl())) {
+            // 분석 실패가 이 알림 외에는 드러나지 않으므로, 알림을 건너뛰었다는 사실은 반드시 남긴다
+            log.info("Slack 비활성화/미설정 — 분석 실패 알림 생략: {} #{} comment={}",
+                    event.getRepoFullName(), event.getPrNumber(), event.getCommentId());
+            return;
+        }
 
         String errorSummary = error.getClass().getSimpleName() + ": " + abbreviate(error.getMessage(), 300);
         String text = "코멘트 분석 실패: " + event.getRepoFullName() + " #" + event.getPrNumber() + " — " + errorSummary;
@@ -113,52 +124,10 @@ public class SlackNotifier {
         }
         try {
             post(mapOf("text", text, "blocks", blocks));
+            log.info("분석 실패 알림 전송 완료: {} #{} comment={}",
+                    event.getRepoFullName(), event.getPrNumber(), event.getCommentId());
         } catch (RuntimeException e) {
             log.warn("Slack 실패 알림 전송도 실패", e);
-        }
-    }
-
-    // PR 자동 4단계 리뷰 결과 알림 (post-to-slack=true일 때 보조 채널로 사용)
-    public void sendPrReview(PrReviewEvent event, PrReviewResult result) {
-        if (!slackProperties.isEnabled() || !StringUtils.hasText(slackProperties.getWebhookUrl())) {
-            log.info("Slack 비활성화/미설정 — PR 리뷰 {} #{} 전송 생략", event.getRepoFullName(), event.getPrNumber());
-            return;
-        }
-        int findingCount = result.getMergedFindings() != null ? result.getMergedFindings().size() : 0;
-        String header = "🤖 PR 자동 리뷰 · " + event.getRepoFullName() + " #" + event.getPrNumber();
-
-        List<Map<String, Object>> blocks = new ArrayList<>();
-        blocks.add(mapOf(
-                "type", "header",
-                "text", mapOf("type", "plain_text", "text", abbreviate(header, HEADER_LIMIT), "emoji", true)));
-        blocks.add(section("*종합 요약*\n" + nv(result.getOverallSummary())));
-        blocks.add(section("*확정 이슈* " + findingCount + "건"));
-        blocks.add(section("*리뷰어 집중 포인트*\n" + nv(result.getReviewerFocusNotes())));
-        if (StringUtils.hasText(event.getPrHtmlUrl())) {
-            blocks.add(actionBlock(event.getPrHtmlUrl(), "🔗 PR 열기"));
-        }
-        post(mapOf(
-                "text", "PR #" + event.getPrNumber() + " 자동 리뷰 완료 (이슈 " + findingCount + "건)",
-                "blocks", blocks));
-    }
-
-    public void sendPrReviewFailure(PrReviewEvent event, Throwable error) {
-        if (!slackProperties.isEnabled() || !StringUtils.hasText(slackProperties.getWebhookUrl())) {
-            return;
-        }
-        String errorSummary = error.getClass().getSimpleName() + ": " + abbreviate(error.getMessage(), 300);
-        String text = "PR 자동 리뷰 실패: " + event.getRepoFullName() + " #" + event.getPrNumber() + " — " + errorSummary;
-
-        List<Map<String, Object>> blocks = new ArrayList<>();
-        blocks.add(section(":warning: *PR 자동 리뷰 실패*\n"
-                + event.getRepoFullName() + " #" + event.getPrNumber() + "\n`" + errorSummary + "`"));
-        if (StringUtils.hasText(event.getPrHtmlUrl())) {
-            blocks.add(actionBlock(event.getPrHtmlUrl(), "🔗 PR 열기"));
-        }
-        try {
-            post(mapOf("text", text, "blocks", blocks));
-        } catch (RuntimeException e) {
-            log.warn("Slack PR 리뷰 실패 알림 전송도 실패", e);
         }
     }
 
@@ -271,23 +240,7 @@ public class SlackNotifier {
     // 사용량은 토큰을 기준으로 표기한다 - 비용은 모델과 요금제에 따라 변하는 파생값이라 추세 비교가 어렵다
     private static String formatUsage(AnalysisResult r) {
         LlmUsage u = r.getUsage();
-        if (u == null) {
-            return null;
-        }
-        StringBuilder sb = new StringBuilder("토큰 ").append(u.getTotalTokens());
-
-        Long budget = r.getTokenBudget();
-        if (budget != null && budget > 0) {
-            sb.append('/').append(budget)
-                    .append(" (남은 예산 ").append(Math.max(0L, budget - u.getTotalTokens())).append(')');
-        }
-        if (r.getRoundsUsed() != null) {
-            sb.append(", 라운드 ").append(r.getRoundsUsed());
-        }
-        if (r.getFilesReadCount() != null) {
-            sb.append(", 조회 파일 ").append(r.getFilesReadCount());
-        }
-        return sb.toString();
+        return u == null ? null : "토큰 " + u.getTotalTokens();
     }
 
     private static Map<String, Object> section(String mrkdwn) {
