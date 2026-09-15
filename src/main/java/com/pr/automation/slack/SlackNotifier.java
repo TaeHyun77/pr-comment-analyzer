@@ -40,9 +40,17 @@ public class SlackNotifier {
     private final SlackProperties slackProperties;
 
     public void send(CommentEvent event, AnalysisResult result) {
-        if (!slackProperties.isEnabled() || !StringUtils.hasText(slackProperties.getWebhookUrl())) return;
+        if (!slackProperties.isEnabled() || !StringUtils.hasText(slackProperties.getWebhookUrl())) {
+            log.info("Slack 비활성화/미설정 — 분석 결과 통지 생략: {} #{} comment={}",
+                    event.getRepoFullName(), event.getPrNumber(), event.getCommentId());
+            return;
+        }
 
         post(buildPayload(event, result));
+
+        // 성공을 남기지 않으면 통지 여부를 예외가 없었다는 사실로만 추론해야 한다
+        log.info("분석 결과 통지 완료: {} #{} comment={}",
+                event.getRepoFullName(), event.getPrNumber(), event.getCommentId());
     }
 
     /**
@@ -98,7 +106,12 @@ public class SlackNotifier {
 
     // 통지 실패
     public void sendFailure(CommentEvent event, Throwable error) {
-        if (!slackProperties.isEnabled() || !StringUtils.hasText(slackProperties.getWebhookUrl())) return;
+        if (!slackProperties.isEnabled() || !StringUtils.hasText(slackProperties.getWebhookUrl())) {
+            // 분석 실패가 이 알림 외에는 드러나지 않으므로, 알림을 건너뛰었다는 사실은 반드시 남긴다
+            log.info("Slack 비활성화/미설정 — 분석 실패 알림 생략: {} #{} comment={}",
+                    event.getRepoFullName(), event.getPrNumber(), event.getCommentId());
+            return;
+        }
 
         String errorSummary = error.getClass().getSimpleName() + ": " + abbreviate(error.getMessage(), 300);
         String text = "코멘트 분석 실패: " + event.getRepoFullName() + " #" + event.getPrNumber() + " — " + errorSummary;
@@ -111,6 +124,8 @@ public class SlackNotifier {
         }
         try {
             post(mapOf("text", text, "blocks", blocks));
+            log.info("분석 실패 알림 전송 완료: {} #{} comment={}",
+                    event.getRepoFullName(), event.getPrNumber(), event.getCommentId());
         } catch (RuntimeException e) {
             log.warn("Slack 실패 알림 전송도 실패", e);
         }

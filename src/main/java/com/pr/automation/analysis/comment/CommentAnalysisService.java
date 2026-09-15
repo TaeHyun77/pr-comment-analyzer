@@ -5,7 +5,6 @@ import com.pr.automation.analysis.comment.agent.CommentAnalysisAgent;
 import com.pr.automation.analysis.comment.dto.AnalysisResult;
 import com.pr.automation.analysis.comment.dto.CommentContext;
 import com.pr.automation.analysis.comment.dto.CommentEvent;
-import com.pr.automation.analysis.comment.agent.CommentAnalysisAgent;
 import com.pr.automation.github.RepoCheckout;
 import com.pr.automation.github.RepoCheckoutFactory;
 import com.pr.automation.error.AutomationException;
@@ -50,6 +49,10 @@ public class CommentAnalysisService {
                 commentStore.markAnalyzed(event.getCommentId(), serializeResult(result));
             }
         } catch (Exception e) {
+            // 원인을 가장 먼저 남긴다 — 뒤따르는 Slack 통지가 꺼져 있거나 실패하면 실패 사유가 어디에도 남지 않는다
+            log.error("코멘트 분석 실패: {} #{} comment={}",
+                    event.getRepoFullName(), event.getPrNumber(), event.getCommentId(), e);
+
             // 분석 실패 시, FAILED 상태로 변경 - 재시도 시 lease에 상관 없이 재분석하도록 함
             commentStore.markFailed(event.getCommentId());
             slackNotifier.sendFailure(event, e); // 실패 알림 전송
@@ -194,7 +197,7 @@ public class CommentAnalysisService {
             return null;
         }
 
-        // 조회 실패(empty)와 미발견 모두 null — patch는 보조 맥락이므로 실패를 삼키고 분석을 계속함 (PR 리뷰 경로와 다른 기준)
+        // 조회 실패와 미발견 모두 null - patch는 보조 맥락이므로 실패를 삼키고 분석을 계속함
         String patch = githubClient.fetchPullFiles(e.getRepoFullName(), e.getPrNumber())
                 .flatMap(files -> files.stream()
                         .filter(f -> e.getFilePath().equals(f.getFilename()))

@@ -49,6 +49,9 @@ public class WebhookEventHandler {
     private final GithubClient githubClient;
 
     public void handle(String event, String deliveryId, byte[] rawBody) {
+        // 수신 자체를 남긴다 — 이 로그가 없으면 웹훅이 도달하지 않은 것과 필터에서 걸러진 것을 구분할 수 없다
+        log.info("웹훅 수신: event={} delivery={}", event, deliveryId);
+
         // GitHub 웹훅을 새로 생성하거나 설정을 변경하면, GitHub가 가장 먼저 딱 한 번 ping 이벤트를 보내기에 분기
         if ("ping".equals(event)) {
             return;
