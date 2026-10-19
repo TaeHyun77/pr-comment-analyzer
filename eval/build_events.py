@@ -131,7 +131,7 @@ def build_event(idx, c, meta):
         "eventType": EVENT_TYPE[c["form"]],
         "repoFullName": meta["target_repo"],
         "prNumber": FIXTURE_PR_NUMBER,
-        "prTitle": f"[eval {c['id']}] 평가용 고정 PR",
+        "prTitle": "평가용 고정 PR",
         "prBody": "평가용 가상 PR. 코멘트 대상 코드는 pinned_sha 시점의 파일이다.",
         "headSha": meta["pinned_sha"],
         "commentId": cid,

@@ -9,10 +9,14 @@
 |---|---|
 | `cases.json` | 케이스 30건 + 정답 라벨 + 근거 코드 위치 |
 | `build_events.py` | 스키마/앵커 검증(`--check`), `CommentEvent` 리플레이 입력 생성(`--emit DIR`) |
+| `run_eval.py` | 리플레이 러너. 프로덕션과 같은 방식으로 `claude` CLI를 호출해 결과를 `results/<label>.jsonl`에 저장 |
+| `score.py` | 채점, 혼동행렬, 구성 비교(A/B), 근거 충실도 판정 |
+| `prompts/verifier-addendum.md` | 검증 단계(별도 세션)의 시스템 프롬프트 추가분. 프로덕션 시스템 프롬프트 뒤에 붙는다 |
+| `test_eval.py` | 러너/채점기 자체 테스트. 스텁 CLI라 비용이 들지 않는다 |
 
 ```bash
 python3 eval/build_events.py --check          # 라벨 동결 전 필수
-python3 eval/build_events.py --emit /tmp/ev   # 케이스별 {event, parentComments} JSON (정답 미포함)
+python3 -m unittest discover -s eval -p 'test_eval.py'   # 러너/채점기 테스트 (API 호출 없음)
 ```
 
 ## 대상 코드와 정답 유출 방지
@@ -40,14 +44,47 @@ python3 eval/build_events.py --emit /tmp/ev   # 케이스별 {event, parentComme
 | 지표 | 계산 |
 |---|---|
 | 판정 정확도 | `verdict` 접두어가 `gold.verdict`와 일치. 3×3 혼동행렬을 함께 보고 |
-| 놓침 (채택→유지/논의) | `defect`·`trap(E5)` 중 틀린 비율. 가장 위험한 오류 |
-| 과잉 수용 (유지→채택) | `misread`·`overengineering`·`trap(E1,E3,E4)` 중 틀린 비율. 복잡도 편향 지표 |
+| 놓침 | 정답이 채택인 건 중 채택이 아닌 것으로 판정한 비율. 가장 위험한 오류 |
+| 과잉 수용 | 정답이 유지인 건 중 채택으로 판정한 비율. 복잡도 편향 지표 |
+| 과잉 보류 / 억지 결론 | 정답이 논의가 아닌데 논의로 판정 / 정답이 논의인데 결론을 낸 비율 |
 | 근거 충실도 | `required_facts` 중 `reasoning`에 담긴 비율 (LLM 판정 또는 수동 체크) |
 | 환각 | `forbidden_claims` 등장 또는 존재하지 않는 파일/라인 인용 |
-| 탐색 효율 | 읽은 파일 수 ÷ `min_files_needed` (`min_files_needed=0`은 제외) |
+| 탐색 효율 | (읽은 파일 + 코멘트가 달린 파일) ÷ `min_files_needed`. 코멘트 파일은 프롬프트에 미리 실리므로 읽은 것으로 센다. `min_files_needed=0`은 제외 |
 | 비용/시간 | `LlmUsage` 토큰·비용, 소요 시간 |
 
 각 케이스는 3회 반복해 평균을 냅니다(비결정성).
+
+## 실행
+
+```bash
+# 프롬프트만 확인 (API 호출 없음)
+python3 eval/run_eval.py --dry-run B1
+
+# 스모크: 2건 x 1회
+python3 eval/run_eval.py --label smoke --cases B1,A5 --runs 1
+
+# 본 실행: 검증 단계 포함. 같은 실행에서 1차 결과와 검증 후 결과가 모두 저장된다
+python3 eval/run_eval.py --label verify --mode verify --runs 3 --concurrency 2
+
+# 채점
+python3 eval/score.py eval/results/verify.jsonl --compare-views   # 쌍체 비교: 1차 vs 검증 후
+python3 eval/score.py eval/results/base.jsonl --compare eval/results/verify.jsonl   # 별도 실행 간 비교
+python3 eval/score.py eval/results/verify.jsonl --judge-facts     # 근거 충실도(LLM 판정, 추가 호출)
+```
+
+- 같은 `--label`로 다시 실행하면 끝난 (케이스, 회차)는 건너뛰고 이어서 돌린다. 처음부터는 `--no-resume`.
+- `--mode verify`는 1차 분석 후 **별도 `claude` 세션**이 1차 결과의 주장을 코드로 반증해 본다. 레코드에 `first`(1차), `verify`(검증), 최종 필드(검증 후), `changed`(판정 변경 여부)가 함께 남는다.
+- `--compare-views`는 **같은 1차 분석을 공유한 쌍체 비교**라서 검증 단계의 순수 효과(바로잡음 / 망침 / 변화 없음)를 비결정성 없이 볼 수 있다. 별도 단일 실행(`--mode single`)과의 비교는 독립 표본이다.
+- 비용 참고(스모크 실측, sonnet/high): B1 $0.085, A5 $0.259(검증 포함). 30건 x 3회 verify 실행은 대략 $15 안팎, 동시성 2에서 1시간 안팎으로 예상된다.
+
+### 프로덕션과 다른 점 (결과 해석 시 주의)
+
+| 항목 | 러너 | 프로덕션 |
+|---|---|---|
+| 유저 프롬프트 | `CommentAnalysisPromptBuilder`를 파이썬으로 포팅 | Java. 빌더가 바뀌면 러너가 경고(`PROMPT_BUILDER_SHA256`) |
+| 파일 patch | 파일 전체가 추가된 합성 patch | GitHub PR 파일 API |
+| 체크아웃 | `git archive` + 카나리 토큰이 든 `.git/config` | 얕은 `git fetch` 체크아웃(토큰 포함 remote) |
+| CLI 출력 | `stream-json`(도구 호출 기록용) | `json` |
 
 ## 라벨링 규칙
 
