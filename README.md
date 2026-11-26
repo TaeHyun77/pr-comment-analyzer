@@ -18,7 +18,7 @@ Notification : Slack Incoming Webhook<br><br>
 
 ### PR COMMENT 분석
 ---
-<img width="747" height="246" alt="image" src="https://github.com/user-attachments/assets/cab5ecb3-eeab-4299-9558-d6234992ddc7" />
+<img width="1059" height="381" alt="image" src="https://github.com/user-attachments/assets/535a2673-ee5c-4803-a617-07260e392a0f" />
 
 1. 웹훅 검증 및 분석 대상 확인
 
