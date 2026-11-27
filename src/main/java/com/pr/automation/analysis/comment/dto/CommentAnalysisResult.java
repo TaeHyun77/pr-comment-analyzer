@@ -1,5 +1,6 @@
 package com.pr.automation.analysis.comment.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.pr.automation.llm.dto.LlmUsage;
@@ -15,7 +16,10 @@ import lombok.Setter;
 @NoArgsConstructor
 @AllArgsConstructor
 @JsonIgnoreProperties(ignoreUnknown = true)
-public class AnalysisResult {
+public class CommentAnalysisResult {
+    // 질문이나 주장이 없는 코멘트(감사, 동의 등)에 LLM이 내리는 판정 - 코드 탐색 없이 끝나며 Slack도 짧게 보낸다
+    public static final String VERDICT_SKIPPED = "분석 생략";
+
     @JsonProperty("comment_summary")
     private String commentSummary; // 코멘트 요약
 
@@ -32,7 +36,10 @@ public class AnalysisResult {
     @JsonProperty("suggested_reply")
     private String suggestedReply; // 리뷰어 코멘트에 달 답변 초안
 
-    // 토큰 사용량(비용 포함). 에이전트 응답이 아니라 CLI 실행 결과에서 채워진다
-    // 비용은 모델/요금제에 따라 변하는 파생값이라 토큰을 기본 지표로 본다
     @Setter private LlmUsage usage;
+
+    @JsonIgnore
+    public boolean isSkipped() {
+        return verdict != null && verdict.trim().startsWith(VERDICT_SKIPPED);
+    }
 }

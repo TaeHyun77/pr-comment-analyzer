@@ -18,10 +18,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-/**
- * 분석 대상 커밋을 임시 디렉터리에 받아두는 일회용 체크아웃
- * 에이전트가 로컬 파일로 저장소를 탐색할 수 있게 하는 것이 목적이며, close 시 디렉터리를 지웁니다.
- */
 @Slf4j
 public class RepoCheckout implements AutoCloseable {
     public static final String DIR_PREFIX = "pr-analysis-";
@@ -35,7 +31,6 @@ public class RepoCheckout implements AutoCloseable {
         return dir;
     }
 
-    // 지정한 커밋 하나만 얕게 받아옵니다.
     public static RepoCheckout fetch(String repoFullName, String headSha, String token) {
         if (!StringUtils.hasText(headSha)) {
             throw new AutomationException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.REPO_NOT_READABLE,

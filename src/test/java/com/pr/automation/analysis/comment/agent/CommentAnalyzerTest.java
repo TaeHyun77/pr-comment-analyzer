@@ -1,7 +1,8 @@
 package com.pr.automation.analysis.comment.agent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.pr.automation.analysis.comment.dto.AnalysisResult;
+import com.pr.automation.analysis.comment.dto.CommentAnalysisResult;
+import com.pr.automation.error.AutomationException;
 import com.pr.automation.llm.LlmChatClient;
 import org.junit.jupiter.api.Test;
 
@@ -10,9 +11,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
 // 네이티브 모드는 루프가 CLI 안에 있으므로, 여기서 검증할 것은 응답 텍스트를 결과로 되살리는 부분이다
-class CommentAnalysisAgentTest {
+class CommentAnalyzerTest {
 
-    private final CommentAnalysisAgent agent = new CommentAnalysisAgent(
+    private final CommentAnalyzer agent = new CommentAnalyzer(
             mock(LlmChatClient.class), mock(CommentAnalysisPromptBuilder.class), new ObjectMapper());
 
     private static final String JSON =
@@ -21,7 +22,7 @@ class CommentAnalysisAgentTest {
 
     @Test
     void 순수_JSON_응답을_파싱한다() {
-        AnalysisResult result = agent.parseResult(JSON);
+        CommentAnalysisResult result = agent.parseResult(JSON);
 
         assertThat(result.getVerdict()).isEqualTo("현 구현 유지 권장 - 근거");
         assertThat(result.getCommentSummary()).isEqualTo("요약");
@@ -30,14 +31,14 @@ class CommentAnalysisAgentTest {
 
     @Test
     void 코드_펜스로_감싸_와도_파싱한다() {
-        AnalysisResult result = agent.parseResult("```json\n" + JSON + "\n```");
+        CommentAnalysisResult result = agent.parseResult("```json\n" + JSON + "\n```");
 
         assertThat(result.getVerdict()).isEqualTo("현 구현 유지 권장 - 근거");
     }
 
     @Test
     void 앞뒤에_설명이_붙어도_JSON만_추출한다() {
-        AnalysisResult result = agent.parseResult("분석했습니다.\n" + JSON + "\n이상입니다.");
+        CommentAnalysisResult result = agent.parseResult("분석했습니다.\n" + JSON + "\n이상입니다.");
 
         assertThat(result.getReasoning()).isEqualTo("이유");
     }
@@ -45,14 +46,14 @@ class CommentAnalysisAgentTest {
     // 값 안의 코드 블록을 응답을 감싼 펜스로 오인하면 JSON이 잘려 정상 응답이 파싱 실패로 버려진다
     @Test
     void 값_안에_코드_블록이_있어도_파싱한다() {
-        AnalysisResult result = agent.parseResult(jsonWithCodeBlock());
+        CommentAnalysisResult result = agent.parseResult(jsonWithCodeBlock());
 
         assertThat(result.getSuggestedApproach()).isEqualTo("```java\nOptional.ofNullable(x)\n```");
     }
 
     @Test
     void 코드_펜스로_감싼_응답의_값_안에_코드_블록이_있어도_파싱한다() {
-        AnalysisResult result = agent.parseResult("```json\n" + jsonWithCodeBlock() + "\n```");
+        CommentAnalysisResult result = agent.parseResult("```json\n" + jsonWithCodeBlock() + "\n```");
 
         assertThat(result.getSuggestedApproach()).isEqualTo("```java\nOptional.ofNullable(x)\n```");
     }
@@ -73,5 +74,34 @@ class CommentAnalysisAgentTest {
         return "{\"verdict\":\"제안 채택 권장\",\"reasoning\":\"이유\",\"comment_summary\":\"요약\","
                 + "\"current_approach\":\"현재\",\"suggested_approach\":\"```java\\nOptional.ofNullable(x)\\n```\","
                 + "\"suggested_reply\":\"답변\"}";
+    }
+
+    // ---- 묶음 응답 ----
+
+    @Test
+    void 묶음_응답은_comment_id별_결과로_파싱한다() {
+        String batch = "```json\n{\"results\":["
+                + "{\"comment_id\":701,\"verdict\":\"현 구현 유지 권장 - a\",\"suggested_reply\":\"답변a\"},"
+                + "{\"comment_id\":9000,\"verdict\":\"제안 채택 권장 - b\",\"suggested_reply\":\"답변b\"}]}\n```";
+
+        java.util.Map<Long, CommentAnalysisResult> results = agent.parseBatchResult(batch);
+
+        assertThat(results).containsOnlyKeys(701L, 9000L);
+        assertThat(results.get(701L).getVerdict()).isEqualTo("현 구현 유지 권장 - a");
+        assertThat(results.get(9000L).getSuggestedReply()).isEqualTo("답변b");
+    }
+
+    @Test
+    void 묶음_응답에_comment_id가_없는_항목은_결과에서_빠진다() {
+        // 어느 코멘트의 결과인지 알 수 없는 항목을 아무 코멘트에나 붙이면 엉뚱한 답변이 저장된다
+        java.util.Map<Long, CommentAnalysisResult> results =
+                agent.parseBatchResult("{\"results\":[{\"verdict\":\"x\"},{\"comment_id\":5,\"verdict\":\"y\"}]}");
+
+        assertThat(results).containsOnlyKeys(5L);
+    }
+
+    @Test
+    void 묶음_응답에_results_배열이_없으면_예외를_던진다() {
+        assertThatThrownBy(() -> agent.parseBatchResult(JSON)).isInstanceOf(AutomationException.class);
     }
 }

@@ -1,6 +1,6 @@
 package com.pr.automation.slack;
 
-import com.pr.automation.analysis.comment.dto.AnalysisResult;
+import com.pr.automation.analysis.comment.dto.CommentAnalysisResult;
 import com.pr.automation.analysis.comment.dto.CommentEvent;
 import com.pr.automation.error.AutomationException;
 import com.pr.automation.error.ErrorCode;
@@ -40,8 +40,8 @@ class SlackNotifierRetryTest {
             .commentId(555L)
             .commentBody("코멘트")
             .build();
-    private static final AnalysisResult RESULT =
-            new AnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null);
+    private static final CommentAnalysisResult RESULT =
+            new CommentAnalysisResult("요약", "현재", "제안", "현 구현 유지 권장", "근거", "답변", null);
 
     private RestTemplate restTemplate;
     private TestSlackNotifier notifier;

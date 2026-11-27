@@ -1,88 +1,106 @@
 package com.pr.automation.analysis.comment.agent;
 
 import com.pr.automation.analysis.comment.dto.CommentContext;
-import com.pr.automation.github.RepoFileReader;
-import com.pr.automation.config.properties.CommentAnalyzerProperties;
-import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
-/* 코멘트가 달린 파일 내용과 PR/코멘트 관련 각종 정보를 (크기 상한을 지키며) 에이전트용 초기 유저 프롬프트 문자열로 조립하는 클래스
-*
-* 코멘트가 달린 파일 본문 확보 및 크기 결정
-* 유저 프롬프트 섹션 조립
-* 섹션별 렌더링 헬퍼
-* 텍스트 가공 유틸
- * */
 @Component
-@RequiredArgsConstructor
 public class CommentAnalysisPromptBuilder {
-    private final CommentAnalyzerProperties commentAnalyzerProperties;
-
     private static final int PR_BODY_LIMIT = 1_500; // PR 본문 설명 길이 제한
-    private static final int CODE_LIMIT = 6_000; // 코멘트 주변 코드 맥락 길이 제한
     private static final int FILE_PATCH_LIMIT = 50_000;
     private static final int PARENT_BODY_LIMIT = 500; // 이전 스레드 코멘트 1건당 길이 제한
     private static final int MAX_THREAD_COMMENTS = 20; // 이전 스레드가 비정상적으로 길 때 토큰 폭주 방지 (오래된 것부터 절단)
     private static final String EVENT_REVIEW_BODY = "review_body";
-    private static final String EVENT_COMMIT_COMMENT = "commit_comment";
-    private static final int SHORT_SHA_LENGTH = 7;
 
-    // 1. 코멘트가 달린 파일 내용을 본문에 끼워 넣음
-    public String buildInitial(
-            CommentContext context,
-            RepoFileReader reader
-    ) {
-        String primaryFileContent = null; // 코멘트가 달린 파일 내용
-        boolean primaryTruncated = false; // 상한 초과로 일부만 제공됐는지 여부
-
-        // 파일 경로를 가진 이벤트면 모두 본문을 붙인다 - 인라인 코멘트뿐 아니라 커밋 코멘트도 대상 파일이 있다
-        if (StringUtils.hasText(context.getFilePath())) {
-            String raw = reader.readFile(context.getFilePath()).orElse(null);
-            int maxChars = commentAnalyzerProperties.getMaxFileChars();
-
-            if (raw != null && raw.length() > maxChars) {
-                primaryTruncated = true;
-                // 앞부분만 자르면 뒷부분에 달린 코멘트의 코드가 사각지대가 되므로, 코멘트 라인을 알면 그 주변을 남김
-                Integer anchor = anchorLine(context);
-                primaryFileContent = anchor != null ? sliceAroundLine(raw, anchor, maxChars) : truncate(raw, maxChars);
-            } else {
-                primaryFileContent = raw;
-            }
-        }
-        return userPrompt(context, primaryFileContent, primaryTruncated);
+    // 코멘트 1건 분석용 프롬프트 - 파일 본문은 넣지 않는다. 체크아웃에 이미 있으므로 Claude가 필요한 부분만 도구로 읽는다
+    public String buildInitial(CommentContext context) {
+        return userPrompt(context);
     }
 
-    // 코멘트가 달린 파일 본문을 주입, 본문을 못 얻었은 예외 상황이라면 경로만 조사 시작점으로 넘김
-    private static void appendPrimaryFile(StringBuilder sb, CommentContext c, String content, boolean truncated) {
-        if (!StringUtils.hasText(content)) {
+    public String buildBatch(List<CommentContext> contexts) {
+        CommentContext first = contexts.get(0);
+        StringBuilder sb = new StringBuilder();
+        appendPrInfo(sb, first);
+
+        sb.append("\n[리뷰 정보]\n같은 리뷰어가 한 리뷰로 함께 제출한 코멘트 ").append(contexts.size())
+                .append("건이다. 각 코멘트를 `코멘트 id=...`로 구분해 모두 분석해라.\n");
+
+        Map<String, String> patchByPath = new LinkedHashMap<>();
+        for (CommentContext c : contexts) {
             if (StringUtils.hasText(c.getFilePath())) {
-                sb.append("\n[조사 시작점]\n파일 ").append(c.getFilePath())
-                        .append(" 부터 살펴보고, 필요한 다른 파일은 도구로 직접 조회해라.\n");
+                patchByPath.putIfAbsent(c.getFilePath(), c.getFilePatch());
             }
-            return;
+        }
+        for (Map.Entry<String, String> entry : patchByPath.entrySet()) {
+            sb.append("\n[").append(entry.getKey()).append(" 의 전체 변경 diff]\n");
+            appendPatchBody(sb, entry.getValue());
         }
 
-        sb.append(truncated ? "\n[코멘트가 달린 파일 내용 일부] " : "\n[코멘트가 달린 파일 전체 내용] ")
-                .append(c.getFilePath()).append("\n```\n").append(content).append("\n```\n");
-        sb.append(truncated
-                ? "파일이 길어 코멘트 라인 주변만 제공됐다. 표시 범위 밖 코드가 필요할 때만 도구로 조회해라.\n"
-                : "이 파일 전체는 이미 제공됐으므로, 이것만으로 판단 가능하면 추가 조회 없이 바로 결론을 내라.\n"
-                        + "이 파일이 호출하는 함수의 정의나 참조하는 설정 파일을 확인해야 할 때만 도구로 조회해라.\n");
+        sb.append("\n[분석할 코멘트]\n");
+        for (CommentContext c : contexts) {
+            sb.append("\n### 코멘트 id=").append(c.getCommentId()).append('\n');
+            appendLocation(sb, c);
+            appendParentThread(sb, c.getParentComments());
+            sb.append("[코멘트 본문]\n");
+            appendCommentAuthor(sb, c);
+            sb.append(orDash(c.getCommentBody())).append('\n');
+        }
+
+        if (!patchByPath.isEmpty()) {
+            sb.append("\n[조사 시작점]\n코멘트가 달린 파일: ").append(String.join(", ", patchByPath.keySet()))
+                    .append("\n파일 내용은 제공되지 않았다. 판정에 필요한 부분만 도구로 읽고, 한 번 읽은 파일은 다른 코멘트에도 재사용해라.\n");
+        }
+        return sb.toString();
     }
 
-    // LLM에 전달할 유저 프롬프트 조립: PR 정보, 코멘트 위치, diff, 부모 스레드, 코멘트 본문, 그리고 코멘트가 달린 파일 본문
-    private String userPrompt(CommentContext c, String primaryFileContent, boolean primaryTruncated) {
+    private static void appendInvestigationStart(StringBuilder sb, CommentContext c) {
+        if (StringUtils.hasText(c.getFilePath())) {
+            sb.append("\n[조사 시작점]\n파일 ").append(c.getFilePath())
+                    .append(" 에 달린 코멘트다. 파일 내용은 제공되지 않았으니 판정에 필요한 부분만 도구로 읽어라.\n");
+        }
+    }
+
+    // LLM에 전달할 유저 프롬프트 조립: PR 정보, 코멘트 위치, diff, 부모 스레드, 코멘트 본문, 조사 시작점
+    private String userPrompt(CommentContext c) {
         StringBuilder sb = new StringBuilder();
 
+        appendPrInfo(sb, c);
+        sb.append("\n[코멘트 위치]\n");
+        appendLocation(sb, c);
+
+        appendFilePatch(sb, c);
+
+        appendParentThread(sb, c.getParentComments());
+
+        sb.append("\n[분석할 리뷰 코멘트]\n");
+        appendCommentAuthor(sb, c);
+        sb.append(orDash(c.getCommentBody())).append('\n');
+
+        appendInvestigationStart(sb, c);
+        return sb.toString();
+    }
+
+    private static void appendPrInfo(StringBuilder sb, CommentContext c) {
         sb.append("[PR 정보]\n")
                 .append("저장소: ").append(c.getRepoFullName()).append("  PR #").append(c.getPrNumber()).append('\n')
+                .append("작성자: ").append(StringUtils.hasText(c.getPrAuthor()) ? "@" + c.getPrAuthor() : "(없음)").append('\n')
                 .append("제목: ").append(orDash(c.getPrTitle())).append('\n')
-                .append("설명: ").append(abbreviate(orDash(c.getPrBody()), PR_BODY_LIMIT)).append('\n')
-                .append("\n[코멘트 위치]\n");
+                .append("설명: ").append(abbreviate(orDash(c.getPrBody()), PR_BODY_LIMIT)).append('\n');
+    }
 
+    private static void appendCommentAuthor(StringBuilder sb, CommentContext c) {
+        if (!StringUtils.hasText(c.getCommentAuthor())) {
+            return;
+        }
+        boolean isPrAuthor = c.getCommentAuthor().equalsIgnoreCase(c.getPrAuthor());
+        sb.append("작성자: @").append(c.getCommentAuthor()).append(isPrAuthor ? " (PR 작성자)" : "").append('\n');
+    }
+
+    private static void appendLocation(StringBuilder sb, CommentContext c) {
         if (StringUtils.hasText(c.getFilePath())) {
             sb.append("파일: ").append(c.getFilePath());
             appendLineAnchor(sb, c);
@@ -96,32 +114,21 @@ public class CommentAnalysisPromptBuilder {
         } else {
             sb.append("PR 전체에 대한 일반 코멘트\n");
         }
-
-        sb.append("\n[관련 코드/맥락]\n").append(abbreviate(orDash(c.getCodeContext()), CODE_LIMIT)).append('\n');
-
-        appendFilePatch(sb, c);
-
-        appendParentThread(sb, c.getParentComments());
-
-        sb.append("\n[분석할 리뷰 코멘트]\n").append(orDash(c.getCommentBody())).append('\n');
-
-        appendPrimaryFile(sb, c, primaryFileContent, primaryTruncated);
-        return sb.toString();
     }
 
-    // 변경 diff는 base가 체크아웃에 없어 에이전트가 스스로 복원할 수 없는 유일한 정보입니다.
-    // 잘렸거나 확보하지 못한 사실을 알리지 않으면 모델이 남은 조각을 전부로 믿고 "다른 변경 없음"으로 단정하도록 합니다.
     private static void appendFilePatch(StringBuilder sb, CommentContext c) {
-        // 파일이 없는 코멘트(PR 일반 코멘트, 리뷰 총평)는 diff 개념 자체가 없으므로 섹션을 만들지 않는다
         if (!StringUtils.hasText(c.getFilePath())) {
             return;
         }
 
         sb.append("\n[이 파일의 전체 변경 diff]\n");
+        appendPatchBody(sb, c.getFilePatch());
+    }
 
-        String patch = c.getFilePatch();
+    private static void appendPatchBody(StringBuilder sb, String patch) {
         if (!StringUtils.hasText(patch)) {
-            sb.append("확보하지 못했다 — 바이너리이거나 변경이 너무 커서 GitHub이 diff를 주지 않았다.\n")
+            // 조회 실패와 GitHub이 patch를 주지 않은 경우를 구분할 수 없으므로 원인을 단정하지 않는다
+            sb.append("확보하지 못했다 — 조회에 실패했거나, 바이너리이거나 변경이 너무 커서 GitHub이 diff를 주지 않았을 수 있다.\n")
                     .append("체크아웃에는 변경 후(head) 코드만 있어 삭제된 코드는 어디서도 확인할 수 없다.\n")
                     .append("삭제된 코드가 판정의 근거가 되어야 한다면 추측하지 말고 확인 불가로 판정해라.\n");
             return;
@@ -135,8 +142,6 @@ public class CommentAnalysisPromptBuilder {
                 .append("```diff\n").append(abbreviate(patch, FILE_PATCH_LIMIT)).append("\n```\n");
     }
 
-    // 답글의 선행 댓글들(오래된→최신 순)을 렌더링
-    // 상한 초과 시 오래된 것부터 버리고 생략 개수를 알림
     private static void appendParentThread(StringBuilder sb, List<String> parents) {
         if (parents == null || parents.isEmpty()) {
             return;
@@ -152,18 +157,9 @@ public class CommentAnalysisPromptBuilder {
         }
     }
 
-    // 라인 번호가 어느 버전(head/base/과거 diff) 기준인지 명시해 잘못된 참조를 막음
     private static void appendLineAnchor(StringBuilder sb, CommentContext c) {
         if (c.isFileLevel()) {
             sb.append(" (파일 전체를 대상으로 달린 코멘트 — 특정 라인 지적이 아니다)");
-            return;
-        }
-        if (EVENT_COMMIT_COMMENT.equals(c.getEventType())) {
-            if (c.getLine() != null) {
-                sb.append(" (커밋 ").append(shortSha(c.getHeadSha()))
-                        .append(" 기준 라인 ").append(c.getLine())
-                        .append(" — PR 누적 diff의 라인 번호와 다를 수 있음)");
-            }
             return;
         }
         if (c.getLine() != null) {
@@ -175,70 +171,13 @@ public class CommentAnalysisPromptBuilder {
                 sb.append("라인 ").append(c.getLine());
             }
             if (left) {
-                sb.append(" — 삭제된 코드에 달린 코멘트");
+                // 삭제된 줄은 체크아웃에 없으므로 파일 diff에서 찾는 방법을 함께 알려 준다
+                sb.append(" — 삭제된 코드에 달린 코멘트, 파일 diff에서 변경 전(-) 줄 번호로 찾는다");
             }
             sb.append(')');
         } else if (c.getOriginalLine() != null) {
             sb.append(" (과거 diff 기준 라인 ").append(c.getOriginalLine()).append(" — 현재 head와 어긋날 수 있음)");
         }
-    }
-
-    private static String shortSha(String sha) {
-        if (!StringUtils.hasText(sha)) {
-            return "?";
-        }
-        return sha.length() > SHORT_SHA_LENGTH ? sha.substring(0, SHORT_SHA_LENGTH) : sha;
-    }
-
-    // 절단 기준 라인, head 기준 line을 우선
-    // 파일 전체 대상 코멘트는 line(=1) 주변으로 자르면 파일 앞머리만 남으므로 앵커 없이 앞에서부터 자르게 합니다.
-    private static Integer anchorLine(CommentContext c) {
-        if (c.isFileLevel()) return null;
-        if (c.getLine() != null) return c.getLine();
-        return c.getOriginalLine();
-    }
-
-    // 상한을 넘는 파일을 코멘트 라인 중심으로 잘라, 잘린 범위를 명시해 되돌려줌
-    static String sliceAroundLine(String content, int anchorLine, int maxChars) {
-        String[] lines = content.split("\n", -1);
-        // 파일 끝 개행이 만든 빈 꼬리 요소는 라인으로 세지 않음
-        int lineCount = lines.length;
-        if (lineCount > 1 && lines[lineCount - 1].isEmpty()) lineCount--;
-        int idx = Math.min(Math.max(anchorLine - 1, 0), lineCount - 1);
-
-        // 앵커 라인 하나가 상한을 넘는 극단 케이스는 그 라인만 잘라서 반환
-        if (lines[idx].length() >= maxChars) {
-            return lines[idx].substring(0, maxChars)
-                    + "\n…(전체 " + lineCount + "라인 중 " + (idx + 1) + "라인의 일부만 표시, 코멘트 라인 중심)";
-        }
-
-        // 앵커에서 위아래로 번갈아 확장하며 문자 예산 안에서 최대 범위를 잡음
-        int start = idx;
-        int end = idx;
-        int used = lines[idx].length();
-        boolean extended = true;
-        while (extended) {
-            extended = false;
-            if (start > 0 && used + lines[start - 1].length() + 1 <= maxChars) {
-                start--;
-                used += lines[start].length() + 1;
-                extended = true;
-            }
-            if (end < lineCount - 1 && used + lines[end + 1].length() + 1 <= maxChars) {
-                end++;
-                used += lines[end].length() + 1;
-                extended = true;
-            }
-        }
-
-        StringBuilder sb = new StringBuilder();
-        for (int i = start; i <= end; i++) {
-            if (i > start) sb.append('\n');
-            sb.append(lines[i]);
-        }
-        sb.append("\n…(전체 ").append(lineCount).append("라인 중 ")
-                .append(start + 1).append('~').append(end + 1).append("라인만 표시, 코멘트 라인 중심)");
-        return sb.toString();
     }
 
     private static String orDash(String s) {
@@ -248,11 +187,5 @@ public class CommentAnalysisPromptBuilder {
     private static String abbreviate(String s, int max) {
         if (s == null) return "(없음)";
         return s.length() <= max ? s : s.substring(0, max - 1) + "…";
-    }
-
-    private static String truncate(String s, int max) {
-        if (s == null) return "";
-        if (s.length() <= max) return s;
-        return s.substring(0, max) + "\n…(파일 일부만 표시, 총 " + s.length() + "자)";
     }
 }
