@@ -6,19 +6,13 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.AsyncConfigurer;
 import org.springframework.scheduling.annotation.EnableAsync;
-import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.concurrent.Executor;
 
-/**
- * 코멘트 분석
- * GitHub 웹훅은 ~10초 내 2xx 응답을 기대하므로 분석(LLM 호출)은 별도 풀에서 돌립니다.
- */
 @Slf4j
 @Configuration
 @EnableAsync
-@EnableScheduling
 public class AsyncConfig implements AsyncConfigurer {
     public static final String ANALYSIS_EXECUTOR = "analysisExecutor";
 
@@ -31,7 +25,6 @@ public class AsyncConfig implements AsyncConfigurer {
         // 큐 포화는 비정상 상황 - 큐의 한계를 100으로 설정
         executor.setQueueCapacity(100);
         executor.setThreadNamePrefix("analysis-");
-        // 큐도 포화되어 작업이 거부되면 로그 찍고 재시도하게 됨
         executor.setRejectedExecutionHandler((task, ex) ->
                 log.error("분석 작업 거부됨 — 큐 포화로 손실. queueSize={}, activeCount={}, poolSize={}",
                 ex.getQueue().size(), ex.getActiveCount(), ex.getPoolSize())

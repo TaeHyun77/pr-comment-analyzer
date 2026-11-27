@@ -129,10 +129,47 @@ class LlmChatClientRetryTest {
         assertThat(command.get(idx + 1)).isNotBlank();
     }
 
+    @Test
+    void 타임아웃을_넘긴_프로세스는_강제_종료하고_재시도하지_않는다() {
+        // 실제 subprocess로 검증 — claude 대신 오래 걸리는 sleep을 실행한다
+        AtomicInteger launches = new AtomicInteger();
+        LlmChatClient client = new LlmChatClient(
+                new ClaudeCliProperties(3, "sonnet", "high", "Read Grep Glob", 1L), objectMapper) {
+            @Override
+            List<String> buildNativeCommand(String systemPrompt) {
+                launches.incrementAndGet();
+                return Arrays.asList("sleep", "30");
+            }
+        };
+
+        long startedAt = System.currentTimeMillis();
+        assertThatThrownBy(() -> client.runAgent("지시서", "프롬프트", WORK_DIR))
+                .isInstanceOf(AutomationException.class)
+                .hasMessageContaining("타임아웃");
+
+        // 30초를 다 기다리지 않고 타임아웃(1초) 직후 끝나야 한다
+        assertThat(System.currentTimeMillis() - startedAt).isLessThan(10_000L);
+        // 타임아웃은 재시도하면 스레드 점유가 배로 늘어나므로 1회만 실행
+        assertThat(launches.get()).isEqualTo(1);
+    }
+
+    @Test
+    void claude_실행_환경에서_API_키를_제거해_구독_사용량으로만_동작한다() {
+        java.util.Map<String, String> env = new java.util.HashMap<>();
+        env.put("ANTHROPIC_API_KEY", "sk-ant-test");
+        env.put("PATH", "/usr/bin");
+
+        LlmChatClient.removeApiBillingEnv(env);
+
+        assertThat(env).doesNotContainKey("ANTHROPIC_API_KEY");
+        // 다른 환경변수는 그대로 두어야 CLI가 정상 실행된다
+        assertThat(env).containsEntry("PATH", "/usr/bin");
+    }
+
     // ---- 헬퍼 ----
 
     private static ClaudeCliProperties props(int maxAttempts) {
-        return new ClaudeCliProperties(maxAttempts, "sonnet", "high", "Read Grep Glob");
+        return new ClaudeCliProperties(maxAttempts, "sonnet", "high", "Read Grep Glob", 600L);
     }
 
     /** execute()를 오버라이드해 실제 subprocess 없이 동작. outputs에 null이면 그 순서에서 예외를 던짐. */

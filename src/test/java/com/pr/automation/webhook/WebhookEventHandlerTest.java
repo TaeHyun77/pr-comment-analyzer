@@ -1,29 +1,21 @@
 package com.pr.automation.webhook;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.pr.automation.analysis.comment.CommentAnalysisService;
-import com.pr.automation.analysis.comment.CommentStore;
+import com.pr.automation.analysis.comment.CommentService;
+import com.pr.automation.analysis.comment.CommentRepository;
 import com.pr.automation.analysis.comment.dto.CommentEvent;
 import com.pr.automation.config.properties.GithubProperties;
 import com.pr.automation.config.properties.CommentAnalyzerProperties;
-import com.pr.automation.config.properties.PrReviewProperties;
-import com.pr.automation.error.AutomationException;
-import com.pr.automation.error.ErrorCode;
-import com.pr.automation.github.GithubClient;
-import com.pr.automation.analysis.pr.PrReviewService;
 import com.pr.automation.slack.SlackNotifier;
-import com.pr.automation.analysis.pr.dto.PrReviewEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.springframework.http.HttpStatus;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -36,30 +28,23 @@ class WebhookEventHandlerTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    private CommentAnalysisService analysisService;
-    private PrReviewService prReviewService;
-    private GithubClient githubClient;
-    private CommentStore commentStore;
+    private CommentService analysisService;
+    private CommentRepository commentRepository;
     private SlackNotifier slackNotifier;
     private WebhookEventHandler handler;
 
     @BeforeEach
     void setUp() {
-        analysisService = mock(CommentAnalysisService.class);
-        prReviewService = mock(PrReviewService.class);
-        githubClient = mock(GithubClient.class);
-        commentStore = mock(CommentStore.class);
+        analysisService = mock(CommentService.class);
+        commentRepository = mock(CommentRepository.class);
         slackNotifier = mock(SlackNotifier.class);
         handler = new WebhookEventHandler(
                 objectMapper,
                 new GithubProperties("token", "myname", "secret", Collections.singletonList("myname/myrepo"), 3, 10000),
-                new CommentAnalyzerProperties(true, 25000, true, 25, 3, 20),
+                new CommentAnalyzerProperties(true, true),
                 analysisService,
-                commentStore,
-                slackNotifier,
-                prReviewService,
-                new PrReviewProperties(true),
-                githubClient);
+                commentRepository,
+                slackNotifier);
     }
 
     private byte[] bytes(String s) {
@@ -78,7 +63,6 @@ class WebhookEventHandlerTest {
                 + "    \"id\": 12345,\n"
                 + "    \"body\": \"이 부분 X 방식이 더 낫지 않을까요?\",\n"
                 + "    \"path\": \"src/Foo.java\",\n"
-                + "    \"diff_hunk\": \"@@ -1,3 +1,4 @@\\n+line\",\n"
                 + "    \"line\": 42,\n"
                 + "    \"side\": \"RIGHT\",\n"
                 + "    \"original_line\": 42,\n"
@@ -115,74 +99,16 @@ class WebhookEventHandlerTest {
     }
 
     @Test
-    void 내_PR에_타인이_단_리뷰코멘트는_추출된다() {
-        Optional<CommentEvent> ce = handler.extract("pull_request_review_comment",
-                bytes(reviewCommentPayload("myname", "reviewer", "User", "created")));
-        assertThat(ce).isPresent();
-        CommentEvent e = ce.get();
-        assertThat(e.getEventType()).isEqualTo(CommentEvent.TYPE_REVIEW_COMMENT);
-        assertThat(e.getRepoFullName()).isEqualTo("myname/myrepo");
-        assertThat(e.getPrNumber()).isEqualTo(7);
-        assertThat(e.getCommentId()).isEqualTo(12345L);
-        assertThat(e.getCommentAuthor()).isEqualTo("reviewer");
-        assertThat(e.getFilePath()).isEqualTo("src/Foo.java");
-        assertThat(e.getLine()).isEqualTo(42);
-        assertThat(e.getSide()).isEqualTo("RIGHT");
-        assertThat(e.getStartLine()).isNull();
-        assertThat(e.getOriginalLine()).isEqualTo(42);
-        assertThat(e.getHeadSha()).isEqualTo("abc123");
-    }
-
-    // 코멘트 앵커 필드만 바꿔 끼울 수 있는 페이로드 (anchorFieldsJson 예: "\"line\": 42, \"side\": \"LEFT\",")
-    private String reviewCommentPayloadWithAnchor(String anchorFieldsJson) {
-        return "{\n"
-                + "  \"action\": \"created\",\n"
-                + "  \"comment\": {\n"
-                + "    \"id\": 12345,\n"
-                + "    \"body\": \"코멘트\",\n"
-                + "    \"path\": \"src/Foo.java\",\n"
-                + "    \"diff_hunk\": \"@@ -1,3 +1,4 @@\\n+line\",\n"
-                + "    " + anchorFieldsJson + "\n"
-                + "    \"html_url\": \"https://github.com/myname/myrepo/pull/7#discussion_r12345\",\n"
-                + "    \"user\": {\"login\": \"reviewer\", \"type\": \"User\"}\n"
-                + "  },\n"
-                + "  \"pull_request\": {\n"
-                + "    \"number\": 7,\n"
-                + "    \"title\": \"A 기능 추가\",\n"
-                + "    \"body\": \"본문\",\n"
-                + "    \"user\": {\"login\": \"myname\", \"type\": \"User\"},\n"
-                + "    \"head\": {\"sha\": \"abc123\", \"ref\": \"feat/a\"}\n"
-                + "  },\n"
-                + "  \"repository\": {\"full_name\": \"myname/myrepo\", \"name\": \"myrepo\", \"owner\": {\"login\": \"myname\", \"type\": \"User\"}}\n"
-                + "}";
-    }
-
-    @Test
-    void 멀티라인_LEFT_코멘트의_앵커정보가_보존된다() {
-        Optional<CommentEvent> ce = handler.extract("pull_request_review_comment",
-                bytes(reviewCommentPayloadWithAnchor("\"line\": 42, \"side\": \"LEFT\", \"start_line\": 38,")));
-        assertThat(ce).isPresent();
-        CommentEvent e = ce.get();
-        assertThat(e.getLine()).isEqualTo(42);
-        assertThat(e.getSide()).isEqualTo("LEFT");
-        assertThat(e.getStartLine()).isEqualTo(38);
-    }
-
-    @Test
-    void outdated_코멘트는_line이_null이고_originalLine만_보존된다() {
-        Optional<CommentEvent> ce = handler.extract("pull_request_review_comment",
-                bytes(reviewCommentPayloadWithAnchor("\"line\": null, \"original_line\": 99,")));
-        assertThat(ce).isPresent();
-        CommentEvent e = ce.get();
-        // 과거 커밋 기준 라인을 head 기준인 것처럼 합치지 않는다 (폴백 제거)
-        assertThat(e.getLine()).isNull();
-        assertThat(e.getOriginalLine()).isEqualTo(99);
+    void 리뷰_코멘트_created_이벤트는_분석_대상으로_추출하지_않는다() {
+        // 같은 리뷰의 코멘트는 리뷰 제출 이벤트 하나로 묶어 분석하므로 개별 이벤트는 진입점이 아니다
+        assertThat(handler.extract("pull_request_review_comment",
+                bytes(reviewCommentPayload("myname", "reviewer", "User", "created")))).isEmpty();
     }
 
     @Test
     void 내_PR에_내가_단_코멘트도_기본설정에서는_추출된다() {
-        Optional<CommentEvent> ce = handler.extract("pull_request_review_comment",
-                bytes(reviewCommentPayload("myname", "myname", "User", "created")));
+        Optional<CommentEvent> ce = handler.extract("pull_request_review",
+                bytes(reviewPayload("myname", "myname", "User", "submitted", "commented", "총평")));
         assertThat(ce).isPresent();
     }
 
@@ -191,35 +117,31 @@ class WebhookEventHandlerTest {
         WebhookEventHandler h = new WebhookEventHandler(
                 objectMapper,
                 new GithubProperties("token", "myname", "secret", Collections.singletonList("myname/myrepo"), 3, 10000),
-                new CommentAnalyzerProperties(false, 25000, true, 25, 3, 20),
+                new CommentAnalyzerProperties(false, true),
                 analysisService,
-                commentStore,
-                slackNotifier,
-                prReviewService,
-                new PrReviewProperties(true),
-                githubClient);
-        assertThat(h.extract("pull_request_review_comment",
-                bytes(reviewCommentPayload("myname", "myname", "User", "created")))).isEmpty();
+                commentRepository,
+                slackNotifier);
+        assertThat(h.extract("pull_request_review",
+                bytes(reviewPayload("myname", "myname", "User", "submitted", "commented", "총평")))).isEmpty();
     }
 
     @Test
     void 봇_코멘트는_제외된다() {
-        assertThat(handler.extract("pull_request_review_comment",
-                bytes(reviewCommentPayload("myname", "dependabot", "Bot", "created")))).isEmpty();
-        assertThat(handler.extract("pull_request_review_comment",
-                bytes(reviewCommentPayload("myname", "some-app[bot]", "User", "created")))).isEmpty();
+        assertThat(handler.extract("pull_request_review",
+                bytes(reviewPayload("myname", "dependabot", "Bot", "submitted", "commented", "총평")))).isEmpty();
+        assertThat(handler.extract("pull_request_review",
+                bytes(reviewPayload("myname", "some-app[bot]", "User", "submitted", "commented", "총평")))).isEmpty();
     }
 
     @Test
     void 다른_사람의_PR이면_제외된다() {
-        assertThat(handler.extract("pull_request_review_comment",
-                bytes(reviewCommentPayload("someone-else", "reviewer", "User", "created")))).isEmpty();
+        assertThat(handler.extract("issue_comment", bytes(issueCommentPayload(true, "someone-else")))).isEmpty();
     }
 
     @Test
     void action이_created가_아니면_제외된다() {
-        assertThat(handler.extract("pull_request_review_comment",
-                bytes(reviewCommentPayload("myname", "reviewer", "User", "edited")))).isEmpty();
+        assertThat(handler.extract("issue_comment",
+                bytes(issueCommentPayload(true, "myname").replace("\"created\"", "\"edited\"")))).isEmpty();
     }
 
     @Test
@@ -234,6 +156,7 @@ class WebhookEventHandlerTest {
         assertThat(ce.get().getEventType()).isEqualTo(CommentEvent.TYPE_ISSUE_COMMENT);
         assertThat(ce.get().getFilePath()).isNull();
         assertThat(ce.get().getHeadSha()).isNull();
+        assertThat(ce.get().getPrAuthor()).isEqualTo("myname");
     }
 
     @Test
@@ -249,28 +172,20 @@ class WebhookEventHandlerTest {
     }
 
     @Test
-    void handle는_대상_코멘트면_비동기_분석을_트리거한다() {
-        handler.handle("pull_request_review_comment", "delivery-2",
-                bytes(reviewCommentPayload("myname", "reviewer", "User", "created")));
+    void handle는_대상_일반_코멘트면_비동기_분석을_트리거한다() {
+        handler.handle("issue_comment", "delivery-2", bytes(issueCommentPayload(true, "myname")));
         ArgumentCaptor<CommentEvent> captor = ArgumentCaptor.forClass(CommentEvent.class);
         verify(analysisService).analyzeAsync(captor.capture());
-        assertThat(captor.getValue().getCommentId()).isEqualTo(12345L);
+        assertThat(captor.getValue().getCommentId()).isEqualTo(999L);
+        verify(analysisService, never()).analyzeReviewAsync(any());
     }
 
     @Test
-    void subject_type이_file이면_파일_전체_대상_코멘트로_판별된다() {
-        Optional<CommentEvent> ce = handler.extract("pull_request_review_comment",
-                bytes(reviewCommentPayload("myname", "reviewer", "User", "created", "file")));
-        assertThat(ce).isPresent();
-        assertThat(ce.get().isFileLevel()).isTrue();
-    }
-
-    @Test
-    void subject_type이_line이면_파일_전체_대상_코멘트가_아니다() {
-        Optional<CommentEvent> ce = handler.extract("pull_request_review_comment",
+    void handle는_리뷰_코멘트_created_이벤트면_아무것도_트리거하지_않는다() {
+        handler.handle("pull_request_review_comment", "delivery-rc",
                 bytes(reviewCommentPayload("myname", "reviewer", "User", "created")));
-        assertThat(ce).isPresent();
-        assertThat(ce.get().isFileLevel()).isFalse();
+        verify(analysisService, never()).analyzeAsync(any());
+        verify(analysisService, never()).analyzeReviewAsync(any());
     }
 
     @Test
@@ -285,16 +200,16 @@ class WebhookEventHandlerTest {
 
     @Test
     void github_repos에_없는_저장소의_코멘트는_제외된다() {
-        String payload = reviewCommentPayload("myname", "reviewer", "User", "created")
+        String payload = issueCommentPayload(true, "myname")
                 .replace("myname/myrepo\", \"name", "myname/otherrepo\", \"name");
-        assertThat(handler.extract("pull_request_review_comment", bytes(payload))).isEmpty();
+        assertThat(handler.extract("issue_comment", bytes(payload))).isEmpty();
     }
 
     @Test
     void github_repos_비교는_대소문자를_구분하지_않는다() {
-        String payload = reviewCommentPayload("myname", "reviewer", "User", "created")
+        String payload = issueCommentPayload(true, "myname")
                 .replace("myname/myrepo\", \"name", "MyName/MyRepo\", \"name");
-        assertThat(handler.extract("pull_request_review_comment", bytes(payload))).isPresent();
+        assertThat(handler.extract("issue_comment", bytes(payload))).isPresent();
     }
 
     @Test
@@ -302,17 +217,11 @@ class WebhookEventHandlerTest {
         WebhookEventHandler noRepos = new WebhookEventHandler(
                 objectMapper,
                 new GithubProperties("token", "myname", "secret", Collections.emptyList(), 3, 10000),
-                new CommentAnalyzerProperties(true, 25000, true, 25, 3, 20),
+                new CommentAnalyzerProperties(true, true),
                 analysisService,
-                commentStore,
-                slackNotifier,
-                prReviewService,
-                new PrReviewProperties(true),
-                githubClient);
-        assertThat(noRepos.extract("pull_request_review_comment",
-                bytes(reviewCommentPayload("myname", "reviewer", "User", "created")))).isEmpty();
-        assertThat(noRepos.extractPullRequest(
-                bytes(pullRequestPayload("myname", "User", "opened")))).isEmpty();
+                commentRepository,
+                slackNotifier);
+        assertThat(noRepos.extract("issue_comment", bytes(issueCommentPayload(true, "myname")))).isEmpty();
     }
 
     // --- pull_request_review (리뷰 총평) ---
@@ -353,16 +262,21 @@ class WebhookEventHandlerTest {
         assertThat(e.getCommentAuthor()).isEqualTo("reviewer");
         assertThat(e.getHeadSha()).isEqualTo("abc123");
         assertThat(e.getPrNumber()).isEqualTo(7);
+        // 스레드에서 PR 작성자의 말을 구분하는 기준
+        assertThat(e.getPrAuthor()).isEqualTo("myname");
         // 총평은 파일/라인 정보가 없다
         assertThat(e.getFilePath()).isNull();
         assertThat(e.getLine()).isNull();
     }
 
     @Test
-    void 본문이_빈_리뷰는_제외된다() {
-        // Approve만 누른 경우와 단일 인라인 코멘트가 만든 리뷰가 모두 여기 해당
-        assertThat(handler.extract("pull_request_review",
-                bytes(reviewPayload("myname", "reviewer", "User", "submitted", "approved", "")))).isEmpty();
+    void 본문이_빈_리뷰_제출도_추출된다() {
+        // 인라인 코멘트만 담긴 리뷰(단일 코멘트, 답글 포함)도 분석 대상 - 분석할 코멘트가 있는지는 서비스가 조회해 판단한다
+        Optional<CommentEvent> ce = handler.extract("pull_request_review",
+                bytes(reviewPayload("myname", "reviewer", "User", "submitted", "commented", "")));
+        assertThat(ce).isPresent();
+        assertThat(ce.get().isReviewBody()).isTrue();
+        assertThat(ce.get().getCommentId()).isEqualTo(5114154618L);
     }
 
     @Test
@@ -386,220 +300,45 @@ class WebhookEventHandlerTest {
         handler.handle("pull_request_review", "delivery-rb",
                 bytes(reviewPayload("myname", "reviewer", "User", "submitted", "commented", "총평입니다")));
         ArgumentCaptor<CommentEvent> captor = ArgumentCaptor.forClass(CommentEvent.class);
-        verify(analysisService).analyzeAsync(captor.capture());
+        verify(analysisService).analyzeReviewAsync(captor.capture());
         assertThat(captor.getValue().isReviewBody()).isTrue();
-    }
-
-    @Test
-    void handle는_본문이_빈_리뷰면_아무것도_트리거하지_않는다() {
-        handler.handle("pull_request_review", "delivery-empty",
-                bytes(reviewPayload("myname", "reviewer", "User", "submitted", "approved", "")));
         verify(analysisService, never()).analyzeAsync(any());
     }
 
-    // --- commit_comment (커밋에 달린 코멘트) ---
-
-    private String commitCommentPayload(String commentAuthor, String commentAuthorType) {
-        return "{\n"
-                + "  \"action\": \"created\",\n"
-                + "  \"comment\": {\n"
-                + "    \"id\": 777,\n"
-                + "    \"body\": \"이 커밋의 계산식이 이상합니다\",\n"
-                + "    \"path\": \"src/Foo.java\",\n"
-                + "    \"line\": 11,\n"
-                + "    \"commit_id\": \"deadbeef\",\n"
-                + "    \"html_url\": \"https://github.com/myname/myrepo/commit/deadbeef#commitcomment-777\",\n"
-                + "    \"user\": {\"login\": \"" + commentAuthor + "\", \"type\": \"" + commentAuthorType + "\"}\n"
-                + "  },\n"
-                + "  \"repository\": {\"full_name\": \"myname/myrepo\", \"name\": \"myrepo\", \"owner\": {\"login\": \"myname\", \"type\": \"User\"}}\n"
-                + "}";
-    }
-
-    private void givenOpenPull(String prAuthor) {
-        when(githubClient.fetchOpenPullForCommit("myname/myrepo", "deadbeef"))
-                .thenReturn(Optional.of(GithubClient.PullRef.builder()
-                        .number(7).title("A 기능 추가").body("본문").author(prAuthor).build()));
+    @Test
+    void handle는_본문이_빈_리뷰도_리뷰_단위_분석을_트리거한다() {
+        handler.handle("pull_request_review", "delivery-empty",
+                bytes(reviewPayload("myname", "reviewer", "User", "submitted", "commented", "")));
+        verify(analysisService).analyzeReviewAsync(any());
     }
 
     @Test
-    void 커밋_코멘트는_소속_열린_PR을_조회해_추출된다() {
-        givenOpenPull("myname");
-        Optional<CommentEvent> ce = handler.extract("commit_comment", bytes(commitCommentPayload("reviewer", "User")));
-        assertThat(ce).isPresent();
-        CommentEvent e = ce.get();
-        assertThat(e.getEventType()).isEqualTo(CommentEvent.TYPE_COMMIT_COMMENT);
-        assertThat(e.isCommitComment()).isTrue();
-        assertThat(e.getPrNumber()).isEqualTo(7);
-        assertThat(e.getPrTitle()).isEqualTo("A 기능 추가");
-        assertThat(e.getCommentId()).isEqualTo(777L);
-        assertThat(e.getFilePath()).isEqualTo("src/Foo.java");
-        assertThat(e.getLine()).isEqualTo(11);
-        // 파일 조회 기준은 PR head가 아니라 코멘트가 달린 커밋
-        assertThat(e.getHeadSha()).isEqualTo("deadbeef");
-    }
-
-    @Test
-    void 열린_PR이_없는_커밋_코멘트는_제외된다() {
-        when(githubClient.fetchOpenPullForCommit("myname/myrepo", "deadbeef")).thenReturn(Optional.empty());
-        assertThat(handler.extract("commit_comment", bytes(commitCommentPayload("reviewer", "User")))).isEmpty();
-    }
-
-    @Test
-    void 커밋_코멘트의_PR_조회_실패는_예외로_전파된다() {
-        when(githubClient.fetchOpenPullForCommit("myname/myrepo", "deadbeef"))
-                .thenThrow(new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR, "조회 실패"));
-        assertThatThrownBy(() -> handler.extract("commit_comment", bytes(commitCommentPayload("reviewer", "User"))))
-                .isInstanceOf(AutomationException.class);
-    }
-
-    @Test
-    void 타인_PR이거나_봇이_단_커밋_코멘트는_제외된다() {
-        givenOpenPull("someone-else");
-        assertThat(handler.extract("commit_comment", bytes(commitCommentPayload("reviewer", "User")))).isEmpty();
-
-        givenOpenPull("myname");
-        assertThat(handler.extract("commit_comment", bytes(commitCommentPayload("dependabot", "Bot")))).isEmpty();
-    }
-
-    @Test
-    void github_repos에_없는_저장소의_커밋_코멘트는_PR_조회도_하지_않는다() {
-        String payload = commitCommentPayload("reviewer", "User")
-                .replace("myname/myrepo\", \"name", "myname/otherrepo\", \"name");
-        assertThat(handler.extract("commit_comment", bytes(payload))).isEmpty();
-        verify(githubClient, never()).fetchOpenPullForCommit(any(), any());
-    }
-
-    @Test
-    void handle는_커밋_코멘트면_분석을_트리거한다() {
-        givenOpenPull("myname");
-        handler.handle("commit_comment", "delivery-cc", bytes(commitCommentPayload("reviewer", "User")));
-        ArgumentCaptor<CommentEvent> captor = ArgumentCaptor.forClass(CommentEvent.class);
-        verify(analysisService).analyzeAsync(captor.capture());
-        assertThat(captor.getValue().isCommitComment()).isTrue();
-    }
-
-    @Test
-    void 코멘트_분석이_비활성이면_커밋_코멘트의_PR_조회도_하지_않는다() {
+    void 코멘트_분석이_비활성이면_분석을_트리거하지_않는다() {
         WebhookEventHandler off = new WebhookEventHandler(
                 objectMapper,
                 new GithubProperties("token", "myname", "secret", Collections.singletonList("myname/myrepo"), 3, 10000),
-                // 6번째 인자가 enabled(kill-switch)
-                new CommentAnalyzerProperties(true, 25000, false, 25, 3, 20),
+                // 3번째 인자가 enabled(kill-switch)
+                new CommentAnalyzerProperties(true, false),
                 analysisService,
-                commentStore,
-                slackNotifier,
-                prReviewService,
-                new PrReviewProperties(true),
-                githubClient);
+                commentRepository,
+                slackNotifier);
 
-        off.handle("commit_comment", "delivery-off", bytes(commitCommentPayload("reviewer", "User")));
+        off.handle("pull_request_review", "delivery-off",
+                bytes(reviewPayload("myname", "reviewer", "User", "submitted", "commented", "총평")));
 
-        verify(githubClient, never()).fetchOpenPullForCommit(any(), any());
-        verify(analysisService, never()).analyzeAsync(any());
+        verify(analysisService, never()).analyzeReviewAsync(any());
     }
 
     @Test
     void handle는_필터_탈락이면_아무것도_트리거하지_않는다() {
-        handler.handle("pull_request_review_comment", "delivery-3",
-                bytes(reviewCommentPayload("someone-else", "reviewer", "User", "created")));
-        verify(analysisService, never()).analyzeAsync(any());
-    }
-
-    // --- PR 생성(opened) 자동 리뷰 경로 ---
-
-    private String pullRequestPayload(String prAuthor, String prAuthorType, String action) {
-        return pullRequestPayload(prAuthor, prAuthorType, action, false);
-    }
-
-    private String pullRequestPayload(String prAuthor, String prAuthorType, String action, boolean draft) {
-        return "{\n"
-                + "  \"action\": \"" + action + "\",\n"
-                + "  \"pull_request\": {\n"
-                + "    \"draft\": " + draft + ",\n"
-                + "    \"number\": 7,\n"
-                + "    \"title\": \"A 기능 추가\",\n"
-                + "    \"body\": \"A 기능을 B 방식으로 구현\",\n"
-                + "    \"html_url\": \"https://github.com/myname/myrepo/pull/7\",\n"
-                + "    \"user\": {\"login\": \"" + prAuthor + "\", \"type\": \"" + prAuthorType + "\"},\n"
-                + "    \"head\": {\"sha\": \"abc123\", \"ref\": \"feat/a\"}\n"
-                + "  },\n"
-                + "  \"repository\": {\"full_name\": \"myname/myrepo\", \"name\": \"myrepo\", \"owner\": {\"login\": \"myname\", \"type\": \"User\"}}\n"
-                + "}";
-    }
-
-    @Test
-    void 내가_연_PR_opened는_리뷰_대상으로_추출된다() {
-        Optional<PrReviewEvent> pre = handler.extractPullRequest(
-                bytes(pullRequestPayload("myname", "User", "opened")));
-        assertThat(pre).isPresent();
-        PrReviewEvent e = pre.get();
-        assertThat(e.getRepoFullName()).isEqualTo("myname/myrepo");
-        assertThat(e.getPrNumber()).isEqualTo(7);
-        assertThat(e.getHeadSha()).isEqualTo("abc123");
-        assertThat(e.getPrAuthor()).isEqualTo("myname");
-        assertThat(e.getPrHtmlUrl()).isEqualTo("https://github.com/myname/myrepo/pull/7");
-    }
-
-    @Test
-    void opened가_아닌_PR_액션은_제외된다() {
-        assertThat(handler.extractPullRequest(bytes(pullRequestPayload("myname", "User", "synchronize")))).isEmpty();
-        assertThat(handler.extractPullRequest(bytes(pullRequestPayload("myname", "User", "closed")))).isEmpty();
-    }
-
-    @Test
-    void draft로_열린_PR은_리뷰_대상에서_제외된다() {
-        assertThat(handler.extractPullRequest(bytes(pullRequestPayload("myname", "User", "opened", true)))).isEmpty();
-    }
-
-    @Test
-    void draft를_ready로_전환하면_리뷰_대상으로_추출된다() {
-        // Ready 전환 시점 페이로드는 draft가 false로 내려오지만, 액션만으로 판정되는지 확인하기 위해 true로 둔다
-        Optional<PrReviewEvent> pre = handler.extractPullRequest(
-                bytes(pullRequestPayload("myname", "User", "ready_for_review", true)));
-        assertThat(pre).isPresent();
-        assertThat(pre.get().getPrNumber()).isEqualTo(7);
-    }
-
-    @Test
-    void 다른_사람이_연_PR이나_봇_PR은_제외된다() {
-        assertThat(handler.extractPullRequest(bytes(pullRequestPayload("someone-else", "User", "opened")))).isEmpty();
-        assertThat(handler.extractPullRequest(bytes(pullRequestPayload("dependabot", "Bot", "opened")))).isEmpty();
-    }
-
-    @Test
-    void pr_review가_비활성이면_PR은_추출되지_않는다() {
-        WebhookEventHandler disabled = new WebhookEventHandler(
-                objectMapper,
-                new GithubProperties("token", "myname", "secret", Collections.singletonList("myname/myrepo"), 3, 10000),
-                new CommentAnalyzerProperties(true, 25000, true, 25, 3, 20),
-                analysisService,
-                commentStore,
-                slackNotifier,
-                prReviewService,
-                new PrReviewProperties(false),
-                githubClient);
-        assertThat(disabled.extractPullRequest(bytes(pullRequestPayload("myname", "User", "opened")))).isEmpty();
-    }
-
-    @Test
-    void handle는_내_PR_opened면_리뷰를_트리거한다() {
-        handler.handle("pull_request", "delivery-pr",
-                bytes(pullRequestPayload("myname", "User", "opened")));
-        ArgumentCaptor<PrReviewEvent> captor = ArgumentCaptor.forClass(PrReviewEvent.class);
-        verify(prReviewService).reviewAsync(captor.capture());
-        assertThat(captor.getValue().getPrNumber()).isEqualTo(7);
-    }
-
-    @Test
-    void handle는_PR_리뷰_대상이_아니면_아무것도_트리거하지_않는다() {
-        handler.handle("pull_request", "delivery-pr2",
-                bytes(pullRequestPayload("someone-else", "User", "opened")));
-        verify(prReviewService, never()).reviewAsync(any());
+        handler.handle("pull_request_review", "delivery-3",
+                bytes(reviewPayload("someone-else", "reviewer", "User", "submitted", "commented", "총평")));
+        verify(analysisService, never()).analyzeReviewAsync(any());
     }
 
     @Test
     void handle는_분석했던_코멘트가_삭제되면_Slack에_알리고_분석은_트리거하지_않는다() {
-        when(commentStore.isTracked(12345L)).thenReturn(true);
+        when(commentRepository.existsById(12345L)).thenReturn(true);
 
         handler.handle("pull_request_review_comment", "delivery-del",
                 bytes(reviewCommentPayload("myname", "reviewer", "User", "deleted")));
@@ -611,7 +350,7 @@ class WebhookEventHandlerTest {
 
     @Test
     void handle는_분석한_적_없는_코멘트의_삭제는_알리지_않는다() {
-        when(commentStore.isTracked(12345L)).thenReturn(false);
+        when(commentRepository.existsById(12345L)).thenReturn(false);
 
         handler.handle("pull_request_review_comment", "delivery-del2",
                 bytes(reviewCommentPayload("myname", "reviewer", "User", "deleted")));
@@ -626,13 +365,13 @@ class WebhookEventHandlerTest {
 
         handler.handle("pull_request_review_comment", "delivery-del3", bytes(payload));
 
-        verify(commentStore, never()).isTracked(anyLong());
+        verify(commentRepository, never()).existsById(anyLong());
         verify(slackNotifier, never()).sendCommentDeleted(any(), anyInt(), anyLong(), any());
     }
 
     @Test
     void handle는_일반_코멘트_삭제도_issue의_PR번호로_알린다() {
-        when(commentStore.isTracked(999L)).thenReturn(true);
+        when(commentRepository.existsById(999L)).thenReturn(true);
         String payload = issueCommentPayload(true, "myname").replace("\"created\"", "\"deleted\"");
 
         handler.handle("issue_comment", "delivery-del4", bytes(payload));

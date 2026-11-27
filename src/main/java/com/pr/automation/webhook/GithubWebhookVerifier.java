@@ -14,7 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 
-// 요청이 진짜 GitHub에서 온 것인지 서명으로 검증하는 클래스
+// GitHub에서 보낸 요청인지 검증하는 클래스
 @Component
 @RequiredArgsConstructor
 public class GithubWebhookVerifier {

@@ -16,7 +16,6 @@ import java.time.Duration;
 @Configuration
 @RequiredArgsConstructor
 public class RestTemplateConfig {
-    // 외부 API 무한 대기 방지용 connect 타임아웃(공통). read 타임아웃은 대상별 지연 편차가 커 각 env로 분리
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
 
     private final GithubProperties githubProperties;

@@ -1,7 +1,6 @@
 package com.pr.automation.github;
 
 import com.pr.automation.config.properties.GithubProperties;
-import com.pr.automation.error.AutomationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
@@ -16,8 +15,6 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -26,10 +23,7 @@ import static org.mockito.Mockito.when;
 
 class GithubClientTest {
 
-    private static final String PULL_FILES_URL = "/repos/{owner}/{repo}/pulls/{number}/files?per_page=100";
-    private static final String ISSUE_COMMENTS_URL = "/repos/{owner}/{repo}/issues/{number}/comments?per_page=100&page={page}";
-    private static final String CREATE_COMMENT_URL = "/repos/{owner}/{repo}/issues/{number}/comments";
-    private static final String MARKER = "<!-- pr-automation:pr-review -->";
+    private static final String PULL_FILES_URL = "/repos/{owner}/{repo}/pulls/{number}/files?per_page=100&page={page}";
 
     private RestTemplate rt;
     private GithubClient client;
@@ -63,7 +57,7 @@ class GithubClientTest {
         f.setPatch("@@ -1 +1 @@\n+x");
         f.setAdditions(2);
         f.setDeletions(1);
-        when(rt.getForObject(eq(PULL_FILES_URL), eq(GithubClient.GhPullFile[].class), eq("me"), eq("repo"), eq(7)))
+        when(rt.getForObject(eq(PULL_FILES_URL), eq(GithubClient.GhPullFile[].class), eq("me"), eq("repo"), eq(7), eq(1)))
                 .thenReturn(new GithubClient.GhPullFile[] {f});
 
         Optional<List<GithubClient.ChangedFile>> result = client.fetchPullFiles("me/repo", 7);
@@ -77,7 +71,7 @@ class GithubClientTest {
 
     @Test
     void fetchPullFiles_일시오류는_재시도후_성공하면_리스트를_반환한다() {
-        when(rt.getForObject(eq(PULL_FILES_URL), eq(GithubClient.GhPullFile[].class), eq("me"), eq("repo"), eq(7)))
+        when(rt.getForObject(eq(PULL_FILES_URL), eq(GithubClient.GhPullFile[].class), eq("me"), eq("repo"), eq(7), eq(1)))
                 .thenThrow(serverError(HttpStatus.SERVICE_UNAVAILABLE))
                 .thenThrow(clientError(HttpStatus.TOO_MANY_REQUESTS))
                 .thenReturn(new GithubClient.GhPullFile[0]);
@@ -86,129 +80,80 @@ class GithubClientTest {
 
         assertThat(result).isPresent();
         assertThat(result.get()).isEmpty();
-        verify(rt, times(3)).getForObject(eq(PULL_FILES_URL), eq(GithubClient.GhPullFile[].class), eq("me"), eq("repo"), eq(7));
+        verify(rt, times(3)).getForObject(eq(PULL_FILES_URL), eq(GithubClient.GhPullFile[].class), eq("me"), eq("repo"), eq(7), eq(1));
         assertThat(sleepCount.get()).isEqualTo(2);
     }
 
     @Test
     void fetchPullFiles_일시오류가_계속되면_재시도_소진후_empty() {
-        when(rt.getForObject(eq(PULL_FILES_URL), eq(GithubClient.GhPullFile[].class), eq("me"), eq("repo"), eq(7)))
+        when(rt.getForObject(eq(PULL_FILES_URL), eq(GithubClient.GhPullFile[].class), eq("me"), eq("repo"), eq(7), eq(1)))
                 .thenThrow(serverError(HttpStatus.BAD_GATEWAY));
 
         assertThat(client.fetchPullFiles("me/repo", 7)).isEmpty();
-        verify(rt, times(3)).getForObject(eq(PULL_FILES_URL), eq(GithubClient.GhPullFile[].class), eq("me"), eq("repo"), eq(7));
+        verify(rt, times(3)).getForObject(eq(PULL_FILES_URL), eq(GithubClient.GhPullFile[].class), eq("me"), eq("repo"), eq(7), eq(1));
         // 마지막 시도 후엔 sleep 없이 즉시 종료
         assertThat(sleepCount.get()).isEqualTo(2);
     }
 
     @Test
     void fetchPullFiles_영구오류_404는_재시도없이_즉시_empty() {
-        when(rt.getForObject(eq(PULL_FILES_URL), eq(GithubClient.GhPullFile[].class), eq("me"), eq("repo"), eq(7)))
+        when(rt.getForObject(eq(PULL_FILES_URL), eq(GithubClient.GhPullFile[].class), eq("me"), eq("repo"), eq(7), eq(1)))
                 .thenThrow(clientError(HttpStatus.NOT_FOUND));
 
         assertThat(client.fetchPullFiles("me/repo", 7)).isEmpty();
-        verify(rt, times(1)).getForObject(eq(PULL_FILES_URL), eq(GithubClient.GhPullFile[].class), eq("me"), eq("repo"), eq(7));
+        verify(rt, times(1)).getForObject(eq(PULL_FILES_URL), eq(GithubClient.GhPullFile[].class), eq("me"), eq("repo"), eq(7), eq(1));
         assertThat(sleepCount.get()).isZero();
     }
 
     @Test
     void fetchPullFiles_네트워크오류_모두_실패시_empty() {
-        when(rt.getForObject(eq(PULL_FILES_URL), eq(GithubClient.GhPullFile[].class), eq("me"), eq("repo"), eq(7)))
+        when(rt.getForObject(eq(PULL_FILES_URL), eq(GithubClient.GhPullFile[].class), eq("me"), eq("repo"), eq(7), eq(1)))
                 .thenThrow(new ResourceAccessException("connect timed out"));
 
         assertThat(client.fetchPullFiles("me/repo", 7)).isEmpty();
-        verify(rt, times(3)).getForObject(eq(PULL_FILES_URL), eq(GithubClient.GhPullFile[].class), eq("me"), eq("repo"), eq(7));
+        verify(rt, times(3)).getForObject(eq(PULL_FILES_URL), eq(GithubClient.GhPullFile[].class), eq("me"), eq("repo"), eq(7), eq(1));
         assertThat(sleepCount.get()).isEqualTo(2);
     }
 
     @Test
-    void createIssueComment_일시오류는_재시도후_성공한다() {
-        when(rt.postForObject(eq(CREATE_COMMENT_URL), any(), eq(Void.class), eq("me"), eq("repo"), eq(7)))
-                .thenThrow(serverError(HttpStatus.SERVICE_UNAVAILABLE))
-                .thenThrow(new ResourceAccessException("read timed out"))
-                .thenReturn(null);
-
-        client.createIssueComment("me/repo", 7, "본문");
-
-        verify(rt, times(3)).postForObject(eq(CREATE_COMMENT_URL), any(), eq(Void.class), eq("me"), eq("repo"), eq(7));
-        assertThat(sleepCount.get()).isEqualTo(2);
-    }
-
-    @Test
-    void createIssueComment_영구오류는_재시도없이_즉시_예외() {
-        // 권한 누락(403) 등은 재시도해도 결과가 같음 — 낭비 사이클 없이 즉시 실패해야 함
-        when(rt.postForObject(eq(CREATE_COMMENT_URL), any(), eq(Void.class), eq("me"), eq("repo"), eq(7)))
-                .thenThrow(clientError(HttpStatus.FORBIDDEN));
-
-        assertThatThrownBy(() -> client.createIssueComment("me/repo", 7, "본문"))
-                .isInstanceOf(AutomationException.class);
-        verify(rt, times(1)).postForObject(eq(CREATE_COMMENT_URL), any(), eq(Void.class), eq("me"), eq("repo"), eq(7));
-        assertThat(sleepCount.get()).isZero();
-    }
-
-    @Test
-    void createIssueComment_일시오류가_계속되면_재시도_소진후_예외() {
-        when(rt.postForObject(eq(CREATE_COMMENT_URL), any(), eq(Void.class), eq("me"), eq("repo"), eq(7)))
-                .thenThrow(serverError(HttpStatus.BAD_GATEWAY));
-
-        assertThatThrownBy(() -> client.createIssueComment("me/repo", 7, "본문"))
-                .isInstanceOf(AutomationException.class);
-        verify(rt, times(3)).postForObject(eq(CREATE_COMMENT_URL), any(), eq(Void.class), eq("me"), eq("repo"), eq(7));
-        assertThat(sleepCount.get()).isEqualTo(2);
-    }
-
-    @Test
-    void hasIssueCommentWithMarker_첫페이지에서_마커를_찾으면_true() {
-        when(rt.getForObject(eq(ISSUE_COMMENTS_URL), eq(GithubClient.GhComment[].class), eq("me"), eq("repo"), eq(7), eq(1)))
-                .thenReturn(new GithubClient.GhComment[] {
-                        comment("일반 코멘트"),
-                        comment(MARKER + "\n## 자동 PR 리뷰")});
-
-        assertThat(client.hasIssueCommentWithMarker("me/repo", 7, MARKER)).isTrue();
-    }
-
-    @Test
-    void hasIssueCommentWithMarker_마커가_없으면_false_마지막페이지에서_중단() {
-        when(rt.getForObject(eq(ISSUE_COMMENTS_URL), eq(GithubClient.GhComment[].class), eq("me"), eq("repo"), eq(7), eq(1)))
-                .thenReturn(new GithubClient.GhComment[] {comment("일반 코멘트")});
-
-        assertThat(client.hasIssueCommentWithMarker("me/repo", 7, MARKER)).isFalse();
-        // 응답이 100건 미만 = 마지막 페이지 — 다음 페이지를 조회하지 않음
-        verify(rt, times(1)).getForObject(eq(ISSUE_COMMENTS_URL), eq(GithubClient.GhComment[].class), eq("me"), eq("repo"), eq(7), any());
-    }
-
-    @Test
-    void hasIssueCommentWithMarker_100건이면_다음_페이지까지_조회한다() {
-        GithubClient.GhComment[] fullPage = new GithubClient.GhComment[100];
+    void fetchPullFiles_100개를_넘으면_다음_페이지까지_모두_조회한다() {
+        GithubClient.GhPullFile[] firstPage = new GithubClient.GhPullFile[100];
         for (int i = 0; i < 100; i++) {
-            fullPage[i] = comment("코멘트 " + i);
+            firstPage[i] = new GithubClient.GhPullFile();
+            firstPage[i].setFilename("src/F" + i + ".java");
         }
-        when(rt.getForObject(eq(ISSUE_COMMENTS_URL), eq(GithubClient.GhComment[].class), eq("me"), eq("repo"), eq(7), eq(1)))
-                .thenReturn(fullPage);
-        when(rt.getForObject(eq(ISSUE_COMMENTS_URL), eq(GithubClient.GhComment[].class), eq("me"), eq("repo"), eq(7), eq(2)))
-                .thenReturn(new GithubClient.GhComment[] {comment(MARKER)});
+        GithubClient.GhPullFile last = new GithubClient.GhPullFile();
+        last.setFilename("src/Last.java");
+        last.setPatch("@@ -1 +1 @@\n+z");
+        when(rt.getForObject(eq(PULL_FILES_URL), eq(GithubClient.GhPullFile[].class), eq("me"), eq("repo"), eq(7), eq(1)))
+                .thenReturn(firstPage);
+        when(rt.getForObject(eq(PULL_FILES_URL), eq(GithubClient.GhPullFile[].class), eq("me"), eq("repo"), eq(7), eq(2)))
+                .thenReturn(new GithubClient.GhPullFile[] {last});
 
-        assertThat(client.hasIssueCommentWithMarker("me/repo", 7, MARKER)).isTrue();
+        Optional<List<GithubClient.ChangedFile>> result = client.fetchPullFiles("me/repo", 7);
+
+        assertThat(result).isPresent();
+        assertThat(result.get()).hasSize(101);
+        // 101번째 파일의 patch가 누락되던 문제의 회귀 방지
+        assertThat(result.get().get(100).getFilename()).isEqualTo("src/Last.java");
+        assertThat(result.get().get(100).getPatch()).isEqualTo("@@ -1 +1 @@\n+z");
     }
 
     @Test
-    void hasIssueCommentWithMarker_조회_영구오류는_예외로_전파() {
-        // "모르면 게시하지 않는다"(fail-closed) — 조회 실패를 false로 뭉개면 중복 게시로 이어짐
-        when(rt.getForObject(eq(ISSUE_COMMENTS_URL), eq(GithubClient.GhComment[].class), eq("me"), eq("repo"), eq(7), eq(1)))
+    void fetchPullFiles_다음_페이지_조회가_실패하면_전체를_empty로_처리한다() {
+        GithubClient.GhPullFile[] firstPage = new GithubClient.GhPullFile[100];
+        for (int i = 0; i < 100; i++) {
+            firstPage[i] = new GithubClient.GhPullFile();
+        }
+        when(rt.getForObject(eq(PULL_FILES_URL), eq(GithubClient.GhPullFile[].class), eq("me"), eq("repo"), eq(7), eq(1)))
+                .thenReturn(firstPage);
+        when(rt.getForObject(eq(PULL_FILES_URL), eq(GithubClient.GhPullFile[].class), eq("me"), eq("repo"), eq(7), eq(2)))
                 .thenThrow(clientError(HttpStatus.NOT_FOUND));
 
-        assertThatThrownBy(() -> client.hasIssueCommentWithMarker("me/repo", 7, MARKER))
-                .isInstanceOf(AutomationException.class);
-        assertThat(sleepCount.get()).isZero();
+        assertThat(client.fetchPullFiles("me/repo", 7)).isEmpty();
     }
 
     // --- 헬퍼 ---
-
-    private static GithubClient.GhComment comment(String body) {
-        GithubClient.GhComment c = new GithubClient.GhComment();
-        c.setBody(body);
-        return c;
-    }
 
     private static HttpClientErrorException clientError(HttpStatus status) {
         return HttpClientErrorException.create(status, status.getReasonPhrase(), null,

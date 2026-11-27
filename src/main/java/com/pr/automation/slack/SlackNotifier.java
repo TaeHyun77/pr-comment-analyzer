@@ -1,6 +1,6 @@
 package com.pr.automation.slack;
 
-import com.pr.automation.analysis.comment.dto.AnalysisResult;
+import com.pr.automation.analysis.comment.dto.CommentAnalysisResult;
 import com.pr.automation.analysis.comment.dto.CommentEvent;
 import com.pr.automation.error.AutomationException;
 import com.pr.automation.error.ErrorCode;
@@ -24,7 +24,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 
-// 분석 결과를 Slack Incoming Webhook으로 보냅니다. slack.enabled=false면 전송 없이 로그만 남김
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -32,14 +31,12 @@ public class SlackNotifier {
     private static final int TEXT_LIMIT = 2_900;
     private static final int HEADER_LIMIT = 150;
     private static final int REPLY_LIMIT = 2_700;
-    // 일시 오류 재시도 시작 백오프 — Slack 순단은 대부분 수 초 내 회복되므로 1s→2s로 짧게 잡음.
-    // 재시도 횟수(slackProperties.maxAttempts)는 env로 분리, 소진 후 실패는 호출자와 복구 사이클 몫
     private static final long INITIAL_BACKOFF_MS = 1000L;
 
     private final RestTemplate slackRestTemplate;
     private final SlackProperties slackProperties;
 
-    public void send(CommentEvent event, AnalysisResult result) {
+    public void send(CommentEvent event, CommentAnalysisResult result) {
         if (!slackProperties.isEnabled() || !StringUtils.hasText(slackProperties.getWebhookUrl())) {
             log.info("Slack 비활성화/미설정 — 분석 결과 통지 생략: {} #{} comment={}",
                     event.getRepoFullName(), event.getPrNumber(), event.getCommentId());
@@ -53,10 +50,6 @@ public class SlackNotifier {
                 event.getRepoFullName(), event.getPrNumber(), event.getCommentId());
     }
 
-    /**
-     * 분석했던(또는 분석 중이던) 코멘트가 삭제됐음을 알립니다.
-     * 이미 통지한 분석의 원본이 사라졌다는 사실만 전하면 되므로 분석 결과는 싣지 않습니다.
-     */
     public void sendCommentDeleted(String repoFullName, int prNumber, long commentId, String commentHtmlUrl) {
         if (!slackProperties.isEnabled() || !StringUtils.hasText(slackProperties.getWebhookUrl())) {
             log.info("Slack 비활성화/미설정 — 코멘트 삭제 알림 생략: {} #{} comment={}", repoFullName, prNumber, commentId);
@@ -66,41 +59,15 @@ public class SlackNotifier {
 
         List<Map<String, Object>> blocks = new ArrayList<>();
         blocks.add(section(":wastebasket: *분석했던 코멘트가 삭제됨*\n"
-                + repoFullName + " #" + prNumber + "\n앞서 보낸 분석의 원본 코멘트가 GitHub에서 삭제됐습니다."));
+                + repoFullName + " #" + prNumber + "\n분석했던 코멘트가 GitHub에서 삭제됐습니다."));
         if (StringUtils.hasText(commentHtmlUrl)) {
             blocks.add(actionBlock(commentHtmlUrl, "🔗 PR 열기"));
         }
         try {
             post(mapOf("text", text, "blocks", blocks));
         } catch (RuntimeException e) {
-            // 알림 실패가 웹훅 ack를 막으면 복구 사이클이 삭제 이벤트를 계속 재전송하게 되므로 삼킨다
+            // 알림 실패가 웹훅 응답을 500으로 만들지 않도록 삼킨다 — 삭제 알림은 부가 기능이라 로그로 충분
             log.warn("코멘트 삭제 알림 전송 실패: {} #{} comment={}", repoFullName, prNumber, commentId, e);
-        }
-    }
-
-    /**
-     * 자동 복구를 포기한 코멘트를 알립니다. 이후 스케줄러가 다시 집지 않으므로 사람이 확인해야 합니다.
-     * 상한에 닿는 순간 복구 대상에서 빠지므로 이 알림은 코멘트당 한 번만 발생합니다.
-     */
-    public void sendRecoveryAbandoned(String repoFullName, int prNumber, long commentId, int attempts, Throwable lastError) {
-        if (!slackProperties.isEnabled() || !StringUtils.hasText(slackProperties.getWebhookUrl())) {
-            log.info("Slack 비활성화/미설정 — 복구 포기 알림 생략: {} #{} comment={}", repoFullName, prNumber, commentId);
-            return;
-        }
-        String errorSummary = lastError == null
-                ? "원인 미상"
-                : lastError.getClass().getSimpleName() + ": " + abbreviate(lastError.getMessage(), 300);
-        String text = "코멘트 분석 자동 복구 포기: " + repoFullName + " #" + prNumber + " — " + errorSummary;
-
-        List<Map<String, Object>> blocks = new ArrayList<>();
-        blocks.add(section(":no_entry: *코멘트 분석 자동 복구 포기*\n"
-                + repoFullName + " #" + prNumber + " (comment " + commentId + ")\n"
-                + attempts + "회 재시도 실패로 자동 복구를 중단했습니다. 수동 확인이 필요합니다.\n`" + errorSummary + "`"));
-        blocks.add(actionBlock("https://github.com/" + repoFullName + "/pull/" + prNumber, "🔗 PR 열기"));
-        try {
-            post(mapOf("text", text, "blocks", blocks));
-        } catch (RuntimeException e) {
-            log.warn("복구 포기 알림 전송도 실패: {} #{} comment={}", repoFullName, prNumber, commentId, e);
         }
     }
 
@@ -141,19 +108,14 @@ public class SlackNotifier {
                     ? "리뷰 총평 (" + e.getReviewState() + ")"
                     : "리뷰 총평";
         }
-        if (e.isCommitComment()) {
-            return "커밋 코멘트";
-        }
         return "PR 일반 코멘트";
     }
 
-    Map<String, Object> buildPayload(CommentEvent e, AnalysisResult r) {
-        // 파일 전체 대상 코멘트는 line이 1로 채워져 오므로 줄 번호를 붙이면 첫 줄 지적으로 오독된다
-        boolean showLine = e.getLine() != null && !e.isFileLevel();
-        String location = StringUtils.hasText(e.getFilePath())
-                ? " · " + e.getFilePath() + (showLine ? ":" + e.getLine() : "")
-                : "";
-        String header = "🔍 " + e.getRepoFullName() + " #" + e.getPrNumber() + location;
+    Map<String, Object> buildPayload(CommentEvent e, CommentAnalysisResult r) {
+        if (r.isSkipped()) {
+            return buildSkippedPayload(e, r);
+        }
+        String header = "🔍 " + e.getRepoFullName() + " #" + e.getPrNumber() + location(e);
 
         List<Map<String, Object>> blocks = new ArrayList<>();
         blocks.add(mapOf(
@@ -188,6 +150,32 @@ public class SlackNotifier {
         return mapOf(
                 "text", "PR #" + e.getPrNumber() + " 코멘트 분석: " + abbreviate(nv(r.getVerdict()), HEADER_LIMIT),
                 "blocks", blocks);
+    }
+
+    // 분석 생략은 근거와 원문만 짧게 보낸다 - 감사 인사마다 전체 분석 형식이 오면 알림 피로가 생기고,
+    // 그렇다고 조용히 거르면 LLM이 잘못 생략한 코멘트를 알아챌 방법이 없다
+    private Map<String, Object> buildSkippedPayload(CommentEvent e, CommentAnalysisResult r) {
+        List<Map<String, Object>> blocks = new ArrayList<>();
+        blocks.add(section("💬 *분석 생략* · " + e.getRepoFullName() + " #" + e.getPrNumber() + location(e) + "\n"
+                + "@" + nv(e.getCommentAuthor()) + ": \"" + abbreviate(nv(e.getCommentBody()), 300) + "\"\n"
+                + "*근거* " + nv(r.getReasoning())));
+        if (StringUtils.hasText(e.getCommentHtmlUrl())) {
+            blocks.add(actionBlock(e.getCommentHtmlUrl(), "🔗 GitHub에서 보기"));
+        }
+        blocks.add(mapOf("type", "context", "elements", Collections.singletonList(
+                mapOf("type", "mrkdwn", "text", commentKindLabel(e)))));
+
+        return mapOf(
+                "text", "PR #" + e.getPrNumber() + " 코멘트 분석 생략: " + abbreviate(nv(r.getVerdict()), HEADER_LIMIT),
+                "blocks", blocks);
+    }
+
+    // 파일 전체 대상 코멘트는 line이 1로 채워져 오므로 줄 번호를 붙이면 첫 줄 지적으로 오독된다
+    private static String location(CommentEvent e) {
+        boolean showLine = e.getLine() != null && !e.isFileLevel();
+        return StringUtils.hasText(e.getFilePath())
+                ? " · " + e.getFilePath() + (showLine ? ":" + e.getLine() : "")
+                : "";
     }
 
     // 일시 오류(429/5xx/네트워크)는 재시도하고, 소진 시 예외를 호출자에게 전달
@@ -238,7 +226,7 @@ public class SlackNotifier {
     }
 
     // 사용량은 토큰을 기준으로 표기한다 - 비용은 모델과 요금제에 따라 변하는 파생값이라 추세 비교가 어렵다
-    private static String formatUsage(AnalysisResult r) {
+    private static String formatUsage(CommentAnalysisResult r) {
         LlmUsage u = r.getUsage();
         return u == null ? null : "토큰 " + u.getTotalTokens();
     }

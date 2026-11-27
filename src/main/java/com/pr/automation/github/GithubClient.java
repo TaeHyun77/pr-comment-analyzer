@@ -1,8 +1,6 @@
 package com.pr.automation.github;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.pr.automation.error.AutomationException;
-import com.pr.automation.error.ErrorCode;
 import com.pr.automation.config.properties.GithubProperties;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -16,10 +14,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.ResourceAccessException;
-import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
-import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
@@ -33,7 +29,7 @@ public class GithubClient {
     private final GithubProperties githubProperties;
 
     // 일시 오류 재시도 시작 백오프 - GitHub 순단은 대부분 수 초 내 회복되므로 1s→2s로 짧게 잡음
-    // 재시도 횟수는 env로 분리, 이걸로도 안 되는 실패는 복구 사이클이 맡음
+    // 재시도 횟수는 env로 분리, 소진 후 실패는 호출자 몫
     private static final long FETCH_INITIAL_BACKOFF_MS = 1000L;
 
     private int fetchMaxAttempts() {
@@ -107,6 +103,14 @@ public class GithubClient {
                         .author(c.getUser() != null && c.getUser().getLogin() != null ? c.getUser().getLogin() : "")
                         .body(c.getBody() != null ? c.getBody() : "")
                         .inReplyToId(c.getInReplyToId())
+                        .pullRequestReviewId(c.getPullRequestReviewId())
+                        .htmlUrl(c.getHtmlUrl())
+                        .filePath(c.getPath())
+                        .line(c.getLine())
+                        .side(c.getSide())
+                        .startLine(c.getStartLine())
+                        .originalLine(c.getOriginalLine())
+                        .subjectType(c.getSubjectType())
                         .build());
             }
             if (comments.length < 100) {
@@ -173,12 +177,7 @@ public class GithubClient {
         }
     }
 
-    // PR에서 변경된 파일 목록을 100개까지 조회합니다.
-    // CommentAnalysisService.fetchFilePatch가 특정 파일의 전체 diff를 찾을 때, 그리고 PrReviewService가 리뷰 대상 diff 전체를 가져올 때 사용
-    //
-    // 실패(empty)와 정상적인 빈 결과(빈 리스트)를 구분해 반환합니다 — PR 리뷰 경로는 empty를 실패로 해석해
-    // 점유를 푸는데, 여기서 실패를 빈 리스트로 뭉개면 리뷰가 완료로 봉인됩니다.
-    // 일시 오류(429/5xx/네트워크 순단)는 내부에서 짧게 재시도해 흡수합니다.
+    // PR의 변경 파일 전체를 페이지 단위로 조회 - 한 페이지(100개)만 보면 그 뒤 파일의 patch가 누락된다
     public Optional<List<ChangedFile>> fetchPullFiles(String repoFullName, int prNumber) {
         if (!isEnabled()) return Optional.empty();
 
@@ -187,41 +186,55 @@ public class GithubClient {
             return Optional.empty();
         }
 
+        List<ChangedFile> all = new java.util.ArrayList<>();
+        // 응답이 100건 미만이면 마지막 페이지
+        for (int page = 1; ; page++) {
+            GhPullFile[] files = fetchPullFilesPage(parts, prNumber, page);
+            if (files == null) {
+                return Optional.empty(); // 조회 실패 - 부분 결과는 대상 파일 누락 여부를 알 수 없어 통째로 실패 처리
+            }
+            all.addAll(toChangedFiles(files));
+            if (files.length < 100) {
+                break;
+            }
+        }
+        return Optional.of(all);
+    }
+
+    // 변경 파일 한 페이지 조회, 실패 시 null
+    private GhPullFile[] fetchPullFilesPage(String[] parts, int prNumber, int page) {
         long backoffMillis = FETCH_INITIAL_BACKOFF_MS;
         for (int attempt = 1; attempt <= fetchMaxAttempts(); attempt++) {
             try {
                 GhPullFile[] files = githubRestTemplate.getForObject(
-                        "/repos/{owner}/{repo}/pulls/{number}/files?per_page=100",
+                        "/repos/{owner}/{repo}/pulls/{number}/files?per_page=100&page={page}",
                         GhPullFile[].class,
-                        parts[0], parts[1], prNumber);
-                return Optional.of(toChangedFiles(files));
+                        parts[0], parts[1], prNumber, page);
+                return files != null ? files : new GhPullFile[0];
             } catch (HttpStatusCodeException e) {
                 if (e.getStatusCode() != HttpStatus.TOO_MANY_REQUESTS && !e.getStatusCode().is5xxServerError()) {
                     // 404 등 영구 오류 — 재시도해도 결과가 같으므로 즉시 실패
-                    log.warn("GitHub PR 변경 파일 조회 실패({}): {} #{}", e.getStatusCode(), repoFullName, prNumber);
-                    return Optional.empty();
+                    log.warn("GitHub PR 변경 파일 조회 실패({}): {}/{} #{} page={}", e.getStatusCode(), parts[0], parts[1], prNumber, page);
+                    return null;
                 }
-                log.warn("GitHub PR 변경 파일 조회 일시 오류({}), 재시도 {}/{}: {} #{}",
-                        e.getStatusCode(), attempt, fetchMaxAttempts(), repoFullName, prNumber);
+                log.warn("GitHub PR 변경 파일 조회 일시 오류({}), 재시도 {}/{}: {}/{} #{} page={}",
+                        e.getStatusCode(), attempt, fetchMaxAttempts(), parts[0], parts[1], prNumber, page);
             } catch (ResourceAccessException e) {
-                log.warn("GitHub PR 변경 파일 조회 네트워크 오류({}), 재시도 {}/{}: {} #{}",
-                        e.getMessage(), attempt, fetchMaxAttempts(), repoFullName, prNumber);
+                log.warn("GitHub PR 변경 파일 조회 네트워크 오류({}), 재시도 {}/{}: {}/{} #{} page={}",
+                        e.getMessage(), attempt, fetchMaxAttempts(), parts[0], parts[1], prNumber, page);
             } catch (Exception e) {
-                log.warn("GitHub PR 변경 파일 조회 실패: {} #{}", repoFullName, prNumber, e);
-                return Optional.empty();
+                log.warn("GitHub PR 변경 파일 조회 실패: {}/{} #{} page={}", parts[0], parts[1], prNumber, page, e);
+                return null;
             }
             if (attempt == fetchMaxAttempts() || !sleepWithFullJitter(backoffMillis)) {
-                return Optional.empty();
+                return null;
             }
             backoffMillis *= 2;
         }
-        return Optional.empty();
+        return null;
     }
 
     private static List<ChangedFile> toChangedFiles(GhPullFile[] files) {
-        if (files == null) {
-            return Collections.emptyList();
-        }
         List<ChangedFile> out = new java.util.ArrayList<>(files.length);
         for (GhPullFile f : files) {
             out.add(ChangedFile.builder()
@@ -236,7 +249,6 @@ public class GithubClient {
         return out;
     }
 
-    // 인터럽트(종료 시그널) 시 false를 반환해 남은 재시도를 중단시킵니다 — 조회 계층은 예외를 던지지 않는다는 규약 유지
     protected boolean sleepWithFullJitter(long maxMillis) {
         try {
             Thread.sleep(ThreadLocalRandom.current().nextLong(maxMillis + 1));
@@ -245,213 +257,6 @@ public class GithubClient {
             Thread.currentThread().interrupt();
             return false;
         }
-    }
-
-    // PR(=issue)에 마커 문자열을 포함한 코멘트가 이미 게시돼 있는지 확인합니다.
-    // 게시 성공 후 완료 기록 전에 크래시해 재진입한 경우의 중복 게시 방지용입니다.
-    // 조회 실패는 예외로 전파 — "모르면 게시하지 않는다"(fail-closed)가 중복 방지 목표에 맞고,
-    // 아직 게시 전이므로 redelivery 재시도가 안전합니다 (조회는 삼킨다는 다른 메서드들과 기준이 다른 이유)
-    public boolean hasIssueCommentWithMarker(String repoFullName, int prNumber, String marker) {
-        if (!isEnabled()) {
-            throw new AutomationException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.GITHUB_API_ERROR, "GitHub 토큰 미설정으로 코멘트 조회 불가");
-        }
-        String[] parts = splitRepo(repoFullName);
-        if (parts == null) {
-            throw new AutomationException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.GITHUB_API_ERROR, "레포 식별 불가: " + repoFullName);
-        }
-
-        // 봇 코멘트는 PR 초기에 달리므로 보통 1페이지에서 발견됨. 응답이 100건 미만이면 마지막 페이지
-        for (int page = 1; ; page++) {
-            GhComment[] comments = fetchIssueCommentsPage(parts, prNumber, page);
-            if (comments == null || comments.length == 0) {
-                return false;
-            }
-            for (GhComment c : comments) {
-                if (c.getBody() != null && c.getBody().contains(marker)) {
-                    return true;
-                }
-            }
-            if (comments.length < 100) {
-                return false;
-            }
-        }
-    }
-
-    // 이슈 코멘트 한 페이지 조회. 일시 오류(429/5xx/네트워크 순단)는 짧게 재시도하고, 영구 오류/소진 시 예외로 전파
-    private GhComment[] fetchIssueCommentsPage(String[] parts, int prNumber, int page) {
-        long backoffMillis = FETCH_INITIAL_BACKOFF_MS;
-        for (int attempt = 1; attempt <= fetchMaxAttempts(); attempt++) {
-            try {
-                return githubRestTemplate.getForObject(
-                        "/repos/{owner}/{repo}/issues/{number}/comments?per_page=100&page={page}",
-                        GhComment[].class,
-                        parts[0], parts[1], prNumber, page);
-            } catch (HttpStatusCodeException e) {
-                if (e.getStatusCode() != HttpStatus.TOO_MANY_REQUESTS && !e.getStatusCode().is5xxServerError()) {
-                    throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR,
-                            "PR 코멘트 목록 조회 실패(" + e.getStatusCode() + "): " + parts[0] + "/" + parts[1] + " #" + prNumber, e);
-                }
-                if (attempt == fetchMaxAttempts()) {
-                    throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR,
-                            "PR 코멘트 목록 조회 재시도 소진: " + parts[0] + "/" + parts[1] + " #" + prNumber, e);
-                }
-                log.warn("PR 코멘트 목록 조회 일시 오류({}), 재시도 {}/{}: {}/{} #{}",
-                        e.getStatusCode(), attempt, fetchMaxAttempts(), parts[0], parts[1], prNumber);
-            } catch (ResourceAccessException e) {
-                if (attempt == fetchMaxAttempts()) {
-                    throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR,
-                            "PR 코멘트 목록 조회 재시도 소진: " + parts[0] + "/" + parts[1] + " #" + prNumber, e);
-                }
-                log.warn("PR 코멘트 목록 조회 네트워크 오류({}), 재시도 {}/{}: {}/{} #{}",
-                        e.getMessage(), attempt, fetchMaxAttempts(), parts[0], parts[1], prNumber);
-            } catch (RestClientException e) {
-                throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR,
-                        "PR 코멘트 목록 조회 실패: " + parts[0] + "/" + parts[1] + " #" + prNumber, e);
-            }
-            if (!sleepWithFullJitter(backoffMillis)) {
-                throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR, "PR 코멘트 목록 조회 재시도 중 인터럽트 발생");
-            }
-            backoffMillis *= 2;
-        }
-        // 도달 불가 - for 안의 모든 경로가 return 또는 throw로 종료됨
-        throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR, "PR 코멘트 목록 조회 실패 (루프 이탈)");
-    }
-
-    // PR(=issue)에 코멘트를 게시합니다.
-    // 일시 오류(429/5xx/네트워크 순단)는 짧게 재시도해 순단 한 번이 redelivery(분 단위 대기 + 포이즌 예산 소모)로
-    // 번지는 것을 막고, 권한/유효성 등 영구 오류는 재시도해도 결과가 같으므로 즉시 실패시킵니다
-    public void createIssueComment(String repoFullName, int prNumber, String body) {
-        if (!isEnabled()) {
-            throw new AutomationException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.GITHUB_API_ERROR, "GitHub 토큰 미설정으로 코멘트 게시 불가");
-        }
-
-        String[] parts = splitRepo(repoFullName);
-        if (parts == null) {
-            throw new AutomationException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.GITHUB_API_ERROR, "레포 식별 불가: " + repoFullName);
-        }
-
-        long backoffMillis = FETCH_INITIAL_BACKOFF_MS;
-        for (int attempt = 1; attempt <= fetchMaxAttempts(); attempt++) {
-            try {
-                githubRestTemplate.postForObject(
-                        "/repos/{owner}/{repo}/issues/{number}/comments",
-                        Collections.singletonMap("body", body),
-                        Void.class,
-                        parts[0], parts[1], prNumber);
-                return;
-            } catch (HttpStatusCodeException e) {
-                if (e.getStatusCode() != HttpStatus.TOO_MANY_REQUESTS && !e.getStatusCode().is5xxServerError()) {
-                    throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR,
-                            "PR 코멘트 게시 실패(" + e.getStatusCode() + "): " + repoFullName + " #" + prNumber, e);
-                }
-                if (attempt == fetchMaxAttempts()) {
-                    throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR,
-                            "PR 코멘트 게시 재시도 소진: " + repoFullName + " #" + prNumber, e);
-                }
-                log.warn("PR 코멘트 게시 일시 오류({}), 재시도 {}/{}: {} #{}",
-                        e.getStatusCode(), attempt, fetchMaxAttempts(), repoFullName, prNumber);
-            } catch (ResourceAccessException e) {
-                if (attempt == fetchMaxAttempts()) {
-                    throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR,
-                            "PR 코멘트 게시 재시도 소진: " + repoFullName + " #" + prNumber, e);
-                }
-                log.warn("PR 코멘트 게시 네트워크 오류({}), 재시도 {}/{}: {} #{}",
-                        e.getMessage(), attempt, fetchMaxAttempts(), repoFullName, prNumber);
-            } catch (RestClientException e) {
-                throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR, "PR 코멘트 게시 실패: " + repoFullName + " #" + prNumber, e);
-            }
-            if (!sleepWithFullJitter(backoffMillis)) {
-                throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR, "PR 코멘트 게시 재시도 중 인터럽트 발생");
-            }
-            backoffMillis *= 2;
-        }
-        // 도달 불가 - for 안의 모든 경로가 return 또는 throw로 종료됨
-        throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR, "PR 코멘트 게시 실패 (루프 이탈)");
-    }
-
-    /**
-     * 커밋이 속한 열린 PR 중 번호가 가장 큰(가장 최근) 1건을 조회합니다.
-     * commit_comment 페이로드에는 PR 정보가 없어, 이 조회로 PR 번호와 작성자를 채워야 기존 필터를 적용할 수 있습니다.
-     *
-     * 열린 PR이 없으면 empty(정상적인 분석 대상 아님)이고, 조회 자체가 실패하면 예외를 던집니다 —
-     * 둘을 구분해야 "대상 아님"은 ack하고 "조회 실패"만 복구 사이클이 재시도할 수 있습니다.
-     */
-    public Optional<PullRef> fetchOpenPullForCommit(String repoFullName, String commitSha) {
-        if (!isEnabled()) {
-            throw new AutomationException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.GITHUB_API_ERROR, "GitHub 토큰 미설정으로 커밋 소속 PR 조회 불가");
-        }
-        String[] parts = splitRepo(repoFullName);
-        if (parts == null || !StringUtils.hasText(commitSha)) {
-            throw new AutomationException(HttpStatus.UNPROCESSABLE_ENTITY, ErrorCode.GITHUB_API_ERROR,
-                    "커밋 소속 PR 조회 대상 식별 불가: repo=" + repoFullName + " sha=" + commitSha);
-        }
-
-        GhPullRef[] pulls = fetchCommitPulls(parts, commitSha);
-        if (pulls == null) {
-            return Optional.empty();
-        }
-
-        GhPullRef latest = null;
-        for (GhPullRef p : pulls) {
-            if (!"open".equalsIgnoreCase(p.getState())) {
-                continue;
-            }
-            // PR 번호는 단조 증가하므로 최대값이 가장 최근에 열린 PR
-            if (latest == null || p.getNumber() > latest.getNumber()) {
-                latest = p;
-            }
-        }
-        if (latest == null) {
-            return Optional.empty();
-        }
-
-        return Optional.of(PullRef.builder()
-                .number(latest.getNumber())
-                .title(latest.getTitle())
-                .body(latest.getBody())
-                .author(latest.getUser() != null ? latest.getUser().getLogin() : null)
-                .build());
-    }
-
-    // 일시 오류(429/5xx/네트워크 순단)는 짧게 재시도하고, 영구 오류/소진 시 예외로 전파.
-    // 응답 본문이 없는 정상 케이스만 null(=소속 PR 없음)로 돌려준다
-    private GhPullRef[] fetchCommitPulls(String[] parts, String commitSha) {
-        long backoffMillis = FETCH_INITIAL_BACKOFF_MS;
-        for (int attempt = 1; attempt <= fetchMaxAttempts(); attempt++) {
-            try {
-                return githubRestTemplate.getForObject(
-                        "/repos/{owner}/{repo}/commits/{sha}/pulls?per_page=100",
-                        GhPullRef[].class,
-                        parts[0], parts[1], commitSha);
-            } catch (HttpStatusCodeException e) {
-                if (e.getStatusCode() != HttpStatus.TOO_MANY_REQUESTS && !e.getStatusCode().is5xxServerError()) {
-                    throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR,
-                            "커밋 소속 PR 조회 실패(" + e.getStatusCode() + "): " + parts[0] + "/" + parts[1] + " sha=" + commitSha, e);
-                }
-                if (attempt == fetchMaxAttempts()) {
-                    throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR,
-                            "커밋 소속 PR 조회 재시도 소진: " + parts[0] + "/" + parts[1] + " sha=" + commitSha, e);
-                }
-                log.warn("커밋 소속 PR 조회 일시 오류({}), 재시도 {}/{}: {}/{} sha={}",
-                        e.getStatusCode(), attempt, fetchMaxAttempts(), parts[0], parts[1], commitSha);
-            } catch (ResourceAccessException e) {
-                if (attempt == fetchMaxAttempts()) {
-                    throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR,
-                            "커밋 소속 PR 조회 재시도 소진: " + parts[0] + "/" + parts[1] + " sha=" + commitSha, e);
-                }
-                log.warn("커밋 소속 PR 조회 네트워크 오류({}), 재시도 {}/{}: {}/{} sha={}",
-                        e.getMessage(), attempt, fetchMaxAttempts(), parts[0], parts[1], commitSha);
-            } catch (RestClientException e) {
-                throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR,
-                        "커밋 소속 PR 조회 실패: " + parts[0] + "/" + parts[1] + " sha=" + commitSha, e);
-            }
-            if (!sleepWithFullJitter(backoffMillis)) {
-                throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR, "커밋 소속 PR 조회 재시도 중 인터럽트 발생");
-            }
-            backoffMillis *= 2;
-        }
-        // 도달 불가 - for 안의 모든 경로가 return 또는 throw로 종료됨
-        throw new AutomationException(HttpStatus.BAD_GATEWAY, ErrorCode.GITHUB_API_ERROR, "커밋 소속 PR 조회 실패 (루프 이탈)");
     }
 
     private static String[] splitRepo(String repoFullName) {
@@ -464,7 +269,7 @@ public class GithubClient {
 
     // --- 공개 결과 DTO ---
 
-    // 스레드 재구성에는 id/author/body/inReplyToId만 쓰이고, 나머지는 복구 경로에서 CommentEvent를 되살릴 때만 채워진다
+    // 스레드 재구성에는 id/author/body/inReplyToId만 쓰이고, 위치 필드와 리뷰 id는 리뷰 단위 분석에서 CommentEvent를 만들 때 쓰인다
     @Getter
     @Builder
     @AllArgsConstructor
@@ -473,27 +278,16 @@ public class GithubClient {
         private final String author;
         private final String body;
         private final Long inReplyToId; // 스레드 재구성용 - 답글이 가리키는 최상위(루트) 코멘트 ID (루트 자신은 null)
+        private final Long pullRequestReviewId; // 이 코멘트를 제출한 리뷰 - 단일 코멘트와 답글도 GitHub이 리뷰를 하나씩 만든다
 
         private final String htmlUrl;
         private final String filePath;
-        private final String diffHunk;
         private final Integer line;
         private final String side;
         private final Integer startLine;
         private final Integer originalLine;
         private final String subjectType;   // "line" | "file"
         private final String reviewState;   // 리뷰 총평(review_body)일 때만
-    }
-
-    // 커밋이 속한 PR의 최소 정보 — commit_comment를 기존 코멘트 분석 경로에 태우기 위한 값만 담는다
-    @Getter
-    @Builder
-    @AllArgsConstructor
-    public static class PullRef {
-        private final int number;
-        private final String title;
-        private final String body;
-        private final String author;
     }
 
     @Getter
@@ -520,12 +314,13 @@ public class GithubClient {
         @JsonProperty("in_reply_to_id")
         private Long inReplyToId;
 
-        // 아래는 복구 경로(리뷰/커밋 코멘트 재조회)에서만 사용. 일반 코멘트 응답에는 없어 null이 된다
+        // 아래는 리뷰 단위 분석에서 CommentEvent를 만들 때 사용
+        // 리뷰별 코멘트 API(/reviews/{id}/comments)는 line/side/subject_type을 주지 않아, PR 전체 목록에서 리뷰 id로 골라낸다
+        @JsonProperty("pull_request_review_id")
+        private Long pullRequestReviewId;
         @JsonProperty("html_url")
         private String htmlUrl;
         private String path;
-        @JsonProperty("diff_hunk")
-        private String diffHunk;
         private Integer line;
         private String side;
         @JsonProperty("start_line")
@@ -552,18 +347,6 @@ public class GithubClient {
         private GhHead head;
         private String title;
         private String body;
-    }
-
-    @Getter
-    @Setter
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class GhPullRef {
-        private int number;
-        private String title;
-        private String body;
-        private String state; // "open" | "closed"
-        private GhUser user;
     }
 
     @Getter

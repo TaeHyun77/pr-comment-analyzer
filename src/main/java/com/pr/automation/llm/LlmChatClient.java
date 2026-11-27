@@ -26,25 +26,18 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-/**
- * claude -p 서브프로세스를 사용하는 LLM 클라이언트
- * HTTP API 대신 로컬 Claude Code CLI를 호출하며, 서브프로세스 오류 시 maxAttempts 회 재시도합니다.
- * 실행 시간과 비용에는 상한을 두지 않으며, 탐색 중 강제 종료되어 분석 결과를 잃는 것을 방지합니다.
- */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class LlmChatClient {
     private static final long INITIAL_BACKOFF_MS = 1000L;
+    private static final long STREAM_DRAIN_TIMEOUT_MS = 3_000L; // 프로세스 종료 후 남은 출력을 다 읽을 때까지의 대기 상한
 
-    /**
-     * 실행 호스트의 개인 설정이 프롬프트로 새어드는 것을 차단하는 역할
-     * safe-mode: CLAUDE.md, 스킬, 플러그인, 훅, MCP를 비활성화 - bare 모드와 달리 구독 인증은 그대로 동작합니다.
-     * 도구 접근 범위는 작업 디렉터리(체크아웃)로 제한되고, 쓸 수 있는 도구는 --tools로 읽기 전용만 허용합니다.
-     */
     private static final List<String> NATIVE_ISOLATION_FLAGS = Collections.unmodifiableList(Arrays.asList(
             "--safe-mode",
             "--strict-mcp-config",
@@ -56,10 +49,6 @@ public class LlmChatClient {
     private final ClaudeCliProperties properties;
     private final ObjectMapper objectMapper;
 
-    /**
-     * 네이티브 도구 모드로 한 번 호출하고 결과 텍스트를 돌려줍니다.
-     * 라운드 루프와 도구 프로토콜을 CLI가 맡으므로 호출자는 프롬프트와 작업 디렉터리만 넘깁니다.
-     */
     public LlmResponse runAgent(String systemPrompt, String userPrompt, Path workingDir) {
         int attempt = 0;
         long backoffMillis = INITIAL_BACKOFF_MS;
@@ -85,6 +74,7 @@ public class LlmChatClient {
             ProcessBuilder pb = new ProcessBuilder(buildNativeCommand(systemPrompt));
             pb.directory(workingDir.toFile());
             pb.redirectInput(tempFile.toFile());
+            removeApiBillingEnv(pb.environment());
 
             Process process = pb.start();
 
@@ -105,16 +95,29 @@ public class LlmChatClient {
                 } catch (IOException ignored) {}
             }, "claude-stderr");
 
+            // 강제 종료 후에도 남은 자식 프로세스가 파이프를 쥐고 있으면 리더가 끝나지 않으므로 JVM 종료를 막지 않게 함
+            stdoutReader.setDaemon(true);
+            stderrReader.setDaemon(true);
             stdoutReader.start();
             stderrReader.start();
-            stdoutReader.join();
-            stderrReader.join(3_000);
+
+            if (!process.waitFor(properties.getTimeoutSeconds(), TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                // 재시도하면 스레드를 (시도 횟수 × 타임아웃)만큼 붙잡게 되므로 재시도 대상(ClaudeCliException)에서 제외
+                throw new AutomationException(HttpStatus.GATEWAY_TIMEOUT, ErrorCode.AI_API_ERROR,
+                        "claude 타임아웃(" + properties.getTimeoutSeconds() + "초)");
+            }
+            stdoutReader.join(STREAM_DRAIN_TIMEOUT_MS);
+            stderrReader.join(STREAM_DRAIN_TIMEOUT_MS);
 
             if (stdoutErrorRef.get() != null) {
                 throw new ClaudeCliException("stdout 읽기 실패: " + stdoutErrorRef.get().getMessage(), stdoutErrorRef.get());
             }
+            if (stdoutReader.isAlive()) {
+                throw new ClaudeCliException("프로세스 종료 후에도 stdout 읽기가 끝나지 않음");
+            }
 
-            int exitCode = process.waitFor();
+            int exitCode = process.exitValue();
             String stdout = stdoutRef.get();
 
             if (exitCode != 0) {
@@ -136,10 +139,12 @@ public class LlmChatClient {
         }
     }
 
-    /**
-     * 읽기 전용 내장 도구만 허용한 실행 커맨드
-     * 패키지 접근 - 읽기 전용 도구와 격리 플래그가 빠지지 않았는지 테스트에서 검증
-     */
+    // ANTHROPIC_API_KEY가 있으면 CLI가 로그인된 구독 계정보다 이 키를 우선 써서 API 요금이 청구된다
+    // 서버 .env에 키가 실수로 들어가도 항상 구독 사용량으로 동작하도록 자식 프로세스 환경에서 제거
+    static void removeApiBillingEnv(Map<String, String> env) {
+        env.remove("ANTHROPIC_API_KEY");
+    }
+
     List<String> buildNativeCommand(String systemPrompt) {
         List<String> command = new ArrayList<>(Arrays.asList(
                 "claude", "-p", "--output-format", "json",
@@ -152,7 +157,6 @@ public class LlmChatClient {
         return command;
     }
 
-    // --output-format json 래퍼에서 result와 사용량을 꺼냅니다. - JSON 파싱 실패 시 raw 출력 반환
     LlmResponse extractResult(String stdout) throws ClaudeCliException {
         try {
             JsonNode node = objectMapper.readTree(stdout);
@@ -170,8 +174,6 @@ public class LlmChatClient {
         }
     }
 
-    // 토큰은 usage가 아니라 modelUsage를 합산 - usage는 --model로 지정한 주 모델만 담고 있어,
-    // CLI가 내부 보조 작업에 쓰는 다른 모델(haiku 등)의 사용량이 누락될 수 있기 때문
     private static LlmUsage toUsage(JsonNode node) {
         long input = 0L;
         long cacheCreation = 0L;
